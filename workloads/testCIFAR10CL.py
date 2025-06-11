@@ -23,16 +23,7 @@ NUM_CLIENTS = cfg.server.num_clients
 class HFToTorchDataset(torch.utils.data.Dataset):
     def __init__(self, hf_dataset):
         self.data = [(ex['img'], ex['label']) for ex in hf_dataset] 
-        self.targets = [y for y, _ in self.data]
-
-#    def _build_targets(self, labels):
-#        class Targets(list):
-#            @property
-#            def val_to_idx(self):
-#                vti = defaultdict(list)
-#                for idx, label in enumerate(self):
-#                    vti[label].append(idx)
-#                return dict(vti)
+        self.targets = [y for _, y in self.data]
 
     def __len__(self):
         return len(self.data)

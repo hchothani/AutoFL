@@ -16,7 +16,7 @@ server:
 cl:
   num_experiences: 5
   strategy: naive
-  split: random
+  split: class
   ewc:
     lmb: 100
   replay:
