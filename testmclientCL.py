@@ -81,7 +81,7 @@ class FlowerClient(NumPyClient):
         self.trainlen_per_exp = trainlen_per_exp
         self.testlen_per_exp = testlen_per_exp
         self.train_cl_strategy, self.train_evaluation = train_partition_strategies[partition_id]
-        self.eval_cl_stratgey, self.eval_evaluation = eval_partition_strategies[partition_id]
+        self.eval_cl_strategy, self.eval_evaluation = eval_partition_strategies[partition_id]
         self.partition_id = partition_id
 
         # To add  later: Battery, Location, Speed, Mobility_Trace
@@ -90,7 +90,7 @@ class FlowerClient(NumPyClient):
 
     # Get Params from Global Model
     def get_parameters(self, config):
-        return get_parameters(self.cl_strategy.model)
+        return get_parameters(self.train_cl_strategy.model)
 
     # Fit on Local Data
     def fit(self, parameters, config):
@@ -123,7 +123,7 @@ class FlowerClient(NumPyClient):
             for exp, acc in res.items():
                 if exp.startswith("Top1_Acc_Exp/"):
                     curr_accpexp.append(float(acc))
-                if exp.startswith("ExperienceForgetting")
+                if exp.startswith("ExperienceForgetting"):
                     curr_avafmpexp.append(float(acc))
                  
 
@@ -141,7 +141,7 @@ class FlowerClient(NumPyClient):
         round_fit = local_eval_metrics["rounds_selected"]
 
         # Calculating Running Cumalative Forgetting Measure
-        if cfg.cl.split != random:
+        if cfg.cl.split != "random":
             cm_fmpexp = []
             for i, e in enumerate(hist_accpexp):
                 e = json.loads(e)
@@ -239,7 +239,7 @@ class FlowerClient(NumPyClient):
     # Evaluate After Updating Global Model
     def evaluate(self, parameters, config):
         # Setting Global Model param
-        set_parameters(self.net, parameters)
+        set_parameters(self.eval_cl_strategy.model, parameters)
         rnd = config["server_round"]
         num_rounds = config["num_rounds"]
 
@@ -247,7 +247,7 @@ class FlowerClient(NumPyClient):
         results = []
         print(f"------------------------Local Client {self.partition_id} Evaluation on Updated Global Model--------------------")
         results.append(self.eval_cl_strategy.eval(self.benchmark.test_stream))
-        last_metrics = eval_evaluation.get_last_metrics()
+        last_metrics = self.eval_evaluation.get_last_metrics()
         stream_loss = last_metrics["Loss_Stream/eval_phase/test_stream"]
         stream_acc = last_metrics["Top1_Acc_Stream/eval_phase/test_stream"]
         stream_ava_forgetting =last_metrics["StreamForgetting/eval_phase/test_stream"]

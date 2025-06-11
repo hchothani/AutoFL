@@ -88,7 +88,7 @@ def evaluate_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metri
     return {
             "global/average_accuracy": sum(w_accuracies) / sum(examples),
             "global/average_loss": sum(w_losses) / sum(examples),
-            "global/average_ava_forgetting_measure", sum(ava_forgetting_measures) / len(ava_forgetting_measures)
+            "global/average_ava_forgetting_measure": sum(ava_forgetting_measures) / len(ava_forgetting_measures),
             "global/average_cumalative_forgetting": sum(cumalative_forgetting_measures) / len(cumalative_forgetting_measures),
             "global/average_stepwise_forgetting": sum(stepwise_forgetting_measures) / len(stepwise_forgetting_measures),
             }
