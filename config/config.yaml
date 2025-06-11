@@ -31,4 +31,5 @@ dataset:
 wb:
   project: test-autofl 
   name: testing
+model: cnn
 

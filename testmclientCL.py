@@ -1,6 +1,7 @@
 # Import From Custom Modules
 from clutils.ParamFns import set_parameters, get_parameters
 from models.SimpleCNN import Net
+from models.resnet import ResNet18
 from workloads.testCIFAR10CL import load_datasets 
 from clutils.make_experiences import split_dataset
 from clutils.clstrat import make_cl_strat 
@@ -37,6 +38,11 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = cfg.dataset.batch_size
 NUM_CLIENTS = cfg.server.num_clients
 NUM_EXP = cfg.cl.num_experiences
+if cfg.model == "resnet":
+    MODEL = ResNet18() 
+else:
+    MODEL = Net()
+
 
 # Enable Green Print
 def cprint(text, color="green"):
@@ -54,8 +60,9 @@ def cprint(text, color="green"):
 
 
 # Persistent State of Clients
-train_partition_strategies = [make_cl_strat(Net().to(DEVICE)) for _ in range(NUM_CLIENTS)]
-eval_partition_strategies = [make_cl_strat(Net().to(DEVICE)) for _ in range(NUM_CLIENTS)]
+
+train_partition_strategies = [make_cl_strat(MODEL.to(DEVICE)) for _ in range(NUM_CLIENTS)]
+eval_partition_strategies = [make_cl_strat(MODEL.to(DEVICE)) for _ in range(NUM_CLIENTS)]
 
 # Client Class
 class FlowerClient(NumPyClient):
