@@ -10,10 +10,12 @@ from avalanche.evaluation.metrics import (
     confusion_matrix_metrics,
     disk_usage_metrics,
     )
-from avalanche.logging import InteractiveLogger, TextLogger, TensorboardLogger, WandBLogger
-from avalanche.training.plugins import EvaluationPlugin
 
-from avalanche.training.supervised import Naive
+from avalanche.logging import InteractiveLogger, TextLogger, TensorboardLogger, WandBLogger
+from avalanche.training.plugins import EvaluationPlugin, ReplayPlugin, EWCPlugin
+from avalanche.training.templates import SupervisedTemplate
+
+from avalanche.training.supervised import Naive, EWC, Replay, iCaRL
 
 from omegaconf import OmegaConf
 from pathlib import Path
@@ -22,7 +24,7 @@ from pathlib import Path
 config_path = Path(__file__).parent.parent / 'config' / 'config.yaml'
 cfg = OmegaConf.load(config_path)
 
-stratetgy = cfg.cl.strategy 
+strategy = cfg.cl.strategy 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def make_cl_strat(net):
@@ -44,11 +46,52 @@ def make_cl_strat(net):
         loggers=[interactive_logger, text_logger]
     )
 
-    cl_strategy = Naive(
-        net, Adam(net.parameters()),
-        CrossEntropyLoss(), train_mb_size=32, train_epochs=3, eval_mb_size=32,
-        evaluator=eval_plugin,
-        device=DEVICE
+    if strategy == "naive":
+        cl_strategy = Naive(
+            net,
+            Adam(net.parameters()),
+            CrossEntropyLoss(),
+            train_mb_size=cfg.dataset.batch_size,
+            train_epochs=cfg.client.epochs,
+            eval_mb_size=cfg.dataset.batch_size,
+            evaluator=eval_plugin,
+            device=DEVICE
+            )
+    if strategy == "ewc":
+        cl_strategy = EWC(
+            net,
+            Adam(net.parameters()),
+            CrossEntropyLoss(),
+            ewc_lambda=cfg.cl.ewc.lambda,
+            train_mb_size=cfg.dataset.batch_size,
+            eval_mb_size=cfg.dataset.batch_size,
+            evaluator=eval_plugin,
+            device=DEVICE
         )
+    if strategy = "replay":
+        cl_strategy = Replay(
+            net, 
+            Adam(net.parameters()),
+            CrossEntropyLoss(),
+            mem_size = cfg.cl.replay.mem_size,
+            train_mb_size=cfg.dataset.batch_size,
+            eval_mb_size=cfg.datasaet.batch_size,
+            evaluator=eval_plugin,
+            device=DEVICE
+        )
+    if strategy = "ewc-replay":
+        replay = ReplayPlugin(mem_size=cfg.cl.replay.mem_size)
+        ewc = EWCPlugin(ewc_lambda=cfg.cl.ewc.lambda)
+        cl_strategy = SupervisedTemplate(
+            net,
+            Adam(net.parameters()),
+            CrossEntropyLoss(),
+            plugins=[replay, ewc],
+            train_mb_size=cfg.dataset.batch_size,
+            test_mb_size=cfg.dataset.batch_size,
+            evaluator=eval_plugin,
+            device=DEVICE
+        )
+        
 
     return cl_strategy, eval_plugin
