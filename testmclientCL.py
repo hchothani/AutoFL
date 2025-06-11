@@ -104,11 +104,12 @@ class FlowerClient(NumPyClient):
         # Train on Experience as per Round
         cprint("Starting Training")
         results = []
-        for i, experience in enumerate(self.benchmark.train_stream, start=1):
-            if i == rnd:
-                print(f"EXP: {experience.current_experience}")
-                trainres = self.train_cl_strategy.train(experience)
-                cprint('Training completed: ')
+        experience = self.benchmark.train_stream[rnd-1]
+        print(f"EXP: {experience.current_experience}")
+        if cfg.cl.split != "random":
+            print(f"Classes in this experience: {experience.classes_in_this_experience}")
+        trainres = self.train_cl_strategy.train(experience)
+        cprint('Training completed: ')
 
         # Loal Eval after fit on client for metrics
         print(f"Local Evaluation of client {self.partition_id} on round {rnd}")
@@ -234,7 +235,7 @@ class FlowerClient(NumPyClient):
         if random.random() < cfg.client.falloff:
             return None
         else:
-            return get_parameters(self.train_cl_strategy.model), self.trainlen_per_exp[rnd-1], fit_dict_return
+            return get_parameters(self.train_cl_strategy.model), len(self.benchmark.train_stream[rnd-1].dataset), fit_dict_return
 
     # Evaluate After Updating Global Model
     def evaluate(self, parameters, config):

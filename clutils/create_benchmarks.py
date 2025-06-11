@@ -14,12 +14,25 @@ project_root = Path(__file__).resolve().parent.parent
 config_path = project_root / "config" / "config.yaml"
 cfg = OmegaConf.load(config_path)
 
+
+
 def make_benchmark(train_dataset, test_dataset):
-    bm = new_instances_benchmark(
-        train_dataset = train_dataset,
-        test_dataset = test_dataset,
-        num_experiences = cfg.cl.num_experiences
-    )
+    if cfg.cl.split == "random":
+        bm = new_instances_benchmark(
+            train_dataset = train_dataset,
+            test_dataset = test_dataset,
+            num_experiences = cfg.cl.num_experiences,
+            seed = 1,
+        )
+    if cfg.cl.split == "class":
+        bm = class_incremental_benchmark(
+            {
+                "train": train_dataset,
+                "test": test_dataset,
+            },
+            num_experiences = cfg.cl.num_experiences,
+            seed = 1
+        )
 
     return bm
  
