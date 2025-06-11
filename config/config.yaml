@@ -17,6 +17,10 @@ cl:
   num_experiences: 5
   strategy: naive
   split: random
+  ewc:
+    lambda: 500
+  replay:
+    mem_size: 100 
 dataset:
   workload: cifar10
   batch_size: 32

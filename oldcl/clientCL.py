@@ -4,6 +4,7 @@ from models.SimpleCNN import Net
 from workloads.CIFAR10CL import load_datasets 
 from clutils.make_experiences import split_dataset
 from clutils.clstrat import make_cl_strat 
+from clutils.create_benchmarks import make_benchmark
 
 import json
 
@@ -125,7 +126,7 @@ def client_fn(context: Context) -> Client:
 
     # Splitting Data into Experiences
 
-    n_experiences = 5
+    n_experiences = cfg.cl.num_experiences
     train_experiences = split_dataset(train_data, n_experiences)
     test_experiences = split_dataset(test_data, n_experiences)  # optional
     ava_train = []
@@ -145,6 +146,7 @@ def client_fn(context: Context) -> Client:
     # Creating Bencmarks -> using Entire testdata for eval -> have to check difference
 
     benchmark = benchmark_from_datasets(train=ava_train, test=ava_test)
+    bm = make_benchmark(as_avalanche_dataset(train_data), as_avalanche_dataset(test_data)) 
 
     # Print ClientID
 
@@ -154,6 +156,6 @@ def client_fn(context: Context) -> Client:
     # Create a single Flower client representing a single organization
     # FlowerClient is a subclass of NumPyClient, so we need to call .to_client()
     # to convert it to a subclass of `flwr.client.Client`
-    return FlowerClient(net, benchmark, trainloader_len, testloader_len).to_client()
+    return FlowerClient(net, bm, trainloader_len, testloader_len).to_client()
 
 
