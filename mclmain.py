@@ -7,7 +7,7 @@ from flwr.server import ServerApp
 from omegaconf import OmegaConf
 import warnings
 
-from mclientCL import client_fn
+from testmclientCL import client_fn
 from mclserver import server_fn
 
 # Ignore Depcreation Warnings
