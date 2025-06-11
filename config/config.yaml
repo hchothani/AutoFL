@@ -18,7 +18,7 @@ cl:
   strategy: naive
   split: random
   ewc:
-    lambda: 500
+    lmb: 100
   replay:
     mem_size: 100 
 dataset:

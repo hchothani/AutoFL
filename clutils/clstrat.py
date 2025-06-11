@@ -15,7 +15,7 @@ from avalanche.logging import InteractiveLogger, TextLogger, TensorboardLogger, 
 from avalanche.training.plugins import EvaluationPlugin, ReplayPlugin, EWCPlugin
 from avalanche.training.templates import SupervisedTemplate
 
-from avalanche.training.supervised import Naive, EWC, Replay, iCaRL
+from avalanche.training.supervised import Naive, EWC, Replay, ICaRL
 
 from omegaconf import OmegaConf
 from pathlib import Path
@@ -62,13 +62,13 @@ def make_cl_strat(net):
             net,
             Adam(net.parameters()),
             CrossEntropyLoss(),
-            ewc_lambda=cfg.cl.ewc.lambda,
+            ewc_lambda=cfg.cl.ewc.lmb,
             train_mb_size=cfg.dataset.batch_size,
             eval_mb_size=cfg.dataset.batch_size,
             evaluator=eval_plugin,
             device=DEVICE
         )
-    if strategy = "replay":
+    if strategy == "replay":
         cl_strategy = Replay(
             net, 
             Adam(net.parameters()),
@@ -79,9 +79,9 @@ def make_cl_strat(net):
             evaluator=eval_plugin,
             device=DEVICE
         )
-    if strategy = "ewc-replay":
+    if strategy == "ewc-replay":
         replay = ReplayPlugin(mem_size=cfg.cl.replay.mem_size)
-        ewc = EWCPlugin(ewc_lambda=cfg.cl.ewc.lambda)
+        ewc = EWCPlugin(ewc_lambda=cfg.cl.ewc.lmb)
         cl_strategy = SupervisedTemplate(
             net,
             Adam(net.parameters()),
