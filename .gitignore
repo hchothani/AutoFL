@@ -12,6 +12,7 @@ __pycache__/
 
 # WandB
 wandb/*
+logs/
 logs/*
 log.txt
 templogs/
