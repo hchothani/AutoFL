@@ -64,6 +64,7 @@ def evaluate_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metri
 
     cumalative_forgetting_measures = [m["cumalative_forgetting_measure"] for _, m in metrics]
     stepwise_forgetting_measures = [m["stepwise_forgetting_measure"] for _, m in metrics]
+    ava_forgetting_measures = [m["ava_forgetting_measure"] for _, m in metrics]
 
     accuracypexp_pc = [json.loads(m["accuracy_per_experience"]) for _, m in metrics]
 
@@ -75,6 +76,7 @@ def evaluate_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metri
         "global/client/accuracy": {id: acc for id, acc in zip(pid,client_accuracies)},
         "global/average/loss": sum(w_losses) / sum(examples),
         "global/client/loss": {id: loss for id, loss in zip(pid, client_losses)},
+        "global/aveerage/ava_forgetting": sum(ava_forgetting_measures) / len(ava_forgetting_measures),
         "global/average/cumalative_forgetting": sum(cumalative_forgetting_measures) / len(cumalative_forgetting_measures),
         "global/client/cumalative_forgetting": {id: cmfm for id, cmfm in zip(pid, cumalative_forgetting_measures)},
         "global/average/stepwise_forgetting": sum(stepwise_forgetting_measures) /  len(stepwise_forgetting_measures),
@@ -86,6 +88,7 @@ def evaluate_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metri
     return {
             "global/average_accuracy": sum(w_accuracies) / sum(examples),
             "global/average_loss": sum(w_losses) / sum(examples),
+            "global/average_ava_forgetting_measure", sum(ava_forgetting_measures) / len(ava_forgetting_measures)
             "global/average_cumalative_forgetting": sum(cumalative_forgetting_measures) / len(cumalative_forgetting_measures),
             "global/average_stepwise_forgetting": sum(stepwise_forgetting_measures) / len(stepwise_forgetting_measures),
             }
@@ -102,7 +105,7 @@ def fit_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metrics:
     # Forgetting Measures
     cumalative_forgetting_measures = [m["cumalative_forgetting_measure"] for _, m in metrics]
     stepwise_forgetting_measures = [m["stepwise_forgetting_measure"] for _, m in metrics]
-
+    ava_forgetting_measures = [m["ava_forgetting_measure"] for _, m in metrics]
     # Round and Partition Id's
     rnd = metrics[0][1]["round"]
     pid = [m["pid"] for _, m in metrics]
@@ -117,6 +120,7 @@ def fit_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metrics:
         "local/client/accuracy": {id: acc for id, acc in zip(pid,client_acc)},
         "local/average/loss": sum(w_losses) / sum(examples),
         "local/client/loss": {id: loss for id, loss in zip(pid, client_loss)},
+        "local/average/ava_forgetting": sum(ava_forgetting_measures) / len(ava_forgetting_measures),
         "local/average/cumalative_forgetting": sum(cumalative_forgetting_measures) / len(cumalative_forgetting_measures),
         "local/client/cumalative_forgetting": {id: cmfm for id, cmfm in zip(pid, cumalative_forgetting_measures)},
         "local/average/stepwise_forgetting": sum(stepwise_forgetting_measures) / len(stepwise_forgetting_measures),
@@ -129,6 +133,7 @@ def fit_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metrics:
     return {
             "local/average_accuracy": sum(w_accuracies) / sum(examples),
             "local/average_loss": sum(w_losses) / sum(examples),
+            "local/average_ava_forgetting": sum(ava_forgetting_measures) / len(ava_forgetting_measures),
             "local/average_cumalative_forgetting": sum(cumalative_forgetting_measures)/ len(cumalative_forgetting_measures),
             "local/average_stepwise_forgetting": sum(stepwise_forgetting_measures) /  len(stepwise_forgetting_measures),
             }

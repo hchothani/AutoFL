@@ -54,7 +54,8 @@ def cprint(text, color="green"):
 
 
 # Persistent State of Clients
-partition_strategies = [make_cl_strat(Net().to(DEVICE)) for _ in range(NUM_CLIENTS)]
+train_partition_strategies = [make_cl_strat(Net().to(DEVICE)) for _ in range(NUM_CLIENTS)]
+eval_partition_strategies = [make_cl_strat(Net().to(DEVICE)) for _ in range(NUM_CLIENTS)]
 
 # Client Class
 class FlowerClient(NumPyClient):
@@ -79,7 +80,8 @@ class FlowerClient(NumPyClient):
         self.benchmark = benchmark
         self.trainlen_per_exp = trainlen_per_exp
         self.testlen_per_exp = testlen_per_exp
-        self.cl_strategy, self.evaluation = partition_strategies[partition_id]
+        self.train_cl_strategy, self.train_evaluation = train_partition_strategies[partition_id]
+        self.eval_cl_stratgey, self.eval_evaluation = eval_partition_strategies[partition_id]
         self.partition_id = partition_id
 
         # To add  later: Battery, Location, Speed, Mobility_Trace
@@ -92,7 +94,7 @@ class FlowerClient(NumPyClient):
 
     # Fit on Local Data
     def fit(self, parameters, config):
-        set_parameters(self.cl_strategy.model, parameters)
+        set_parameters(self.train_cl_strategy.model, parameters)
         rnd = config["server_round"]
         num_rounds = config["num_rounds"]
 
@@ -105,29 +107,33 @@ class FlowerClient(NumPyClient):
         for i, experience in enumerate(self.benchmark.train_stream, start=1):
             if i == rnd:
                 print(f"EXP: {experience.current_experience}")
-                trainres = self.cl_strategy.train(experience)
+                trainres = self.train_cl_strategy.train(experience)
                 cprint('Training completed: ')
 
         # Loal Eval after fit on client for metrics
         print(f"Local Evaluation of client {self.partition_id} on round {rnd}")
-        results.append(self.cl_strategy.eval(self.benchmark.test_stream))
+        results.append(self.train_cl_strategy.eval(self.benchmark.test_stream))
         cprint("Local Eval Results")
         print(results)
 
         # Calc Accuracy per Experience 
         curr_accpexp = []
+        curr_avafmpexp = []
         for res in results:
             for exp, acc in res.items():
                 if exp.startswith("Top1_Acc_Exp/"):
                     curr_accpexp.append(float(acc))
+                if exp.startswith("ExperienceForgetting")
+                    curr_avafmpexp.append(float(acc))
                  
 
         # Get Local Eval Metrics from Avalanche
-        last_metrics = self.evaluation.get_last_metrics()
+        last_metrics = self.train_evaluation.get_last_metrics()
         confusion_matrix = last_metrics["ConfusionMatrix_Stream/eval_phase/test_stream"].tolist()
         stream_loss = last_metrics["Loss_Stream/eval_phase/test_stream"]
         stream_acc = last_metrics["Top1_Acc_Stream/eval_phase/test_stream"]
         stream_disc_usage = last_metrics["DiskUsage_Stream/eval_phase/test_stream"]
+        stream_ava_forgetting = last_metrics["StreamForgetting/eval_phase/test_stream"]
 
         # Calculating Forgetting Measures
         local_eval_metrics = self.client_state.config_records["local_eval_metrics"]
@@ -135,15 +141,20 @@ class FlowerClient(NumPyClient):
         round_fit = local_eval_metrics["rounds_selected"]
 
         # Calculating Running Cumalative Forgetting Measure
-        cm_fmpexp = []
-        for i, e in enumerate(hist_accpexp):
-            e = json.loads(e)
-            fm = e[i] - curr_accpexp[i];
-            cm_fmpexp.append(fm)
-        if cm_fmpexp:
-            cmfm = sum(cm_fmpexp)/len(cm_fmpexp)
+        if cfg.cl.split != random:
+            cm_fmpexp = []
+            for i, e in enumerate(hist_accpexp):
+                e = json.loads(e)
+                fm = e[i] - curr_accpexp[i];
+                cm_fmpexp.append(fm)
+            if cm_fmpexp:
+                cmfm = sum(cm_fmpexp)/len(cm_fmpexp)
+            else:
+                cmfm = 0
         else:
+            cm_fmpexp = [0 for _ in range(NUM_EXP)]
             cmfm = 0
+
 
         # Checking Cumalative Forgetting Measure
         cprint("Check Cumalative FM", "blue")
@@ -175,12 +186,14 @@ class FlowerClient(NumPyClient):
                 "confusion_matrix": json.dumps(confusion_matrix),
                 "cumalative_forgetting_measure":  float(cmfm),
                 "stepwise_forgetting_measure": float(swfm),
+                "ava_forgetting_measure": float(stream_ava_forgetting),
                 "stream_loss":  float(stream_loss),
                 "stream_acc":  float(stream_acc),
                 "stream_disc_usage":  float(stream_disc_usage),
                 "accuracy_per_experience": json.dumps(curr_accpexp),
                 "stepwise_forgetting_per_exp": json.dumps(sw_fmpexp),
                 "cumalative_forgetting_per_exp": json.dumps(cm_fmpexp),
+                "ava_forgetting_per_exp": json.dumps(curr_avafmpexp),
                 "pid": self.partition_id,
                 "round": rnd,
             }
@@ -221,7 +234,7 @@ class FlowerClient(NumPyClient):
         if random.random() < cfg.client.falloff:
             return None
         else:
-            return get_parameters(self.cl_strategy.model), self.trainlen_per_exp[rnd-1], fit_dict_return
+            return get_parameters(self.train_cl_strategy.model), self.trainlen_per_exp[rnd-1], fit_dict_return
 
     # Evaluate After Updating Global Model
     def evaluate(self, parameters, config):
@@ -230,16 +243,14 @@ class FlowerClient(NumPyClient):
         rnd = config["server_round"]
         num_rounds = config["num_rounds"]
 
-        # Creating a new CL Strategy for Evaluation
-        cl_strategy, evaluation = make_cl_strat(self.net)
-
         # Distributed Client Evaluation
         results = []
         print(f"------------------------Local Client {self.partition_id} Evaluation on Updated Global Model--------------------")
-        results.append(cl_strategy.eval(self.benchmark.test_stream))
-        last_metrics = evaluation.get_last_metrics()
+        results.append(self.eval_cl_strategy.eval(self.benchmark.test_stream))
+        last_metrics = eval_evaluation.get_last_metrics()
         stream_loss = last_metrics["Loss_Stream/eval_phase/test_stream"]
         stream_acc = last_metrics["Top1_Acc_Stream/eval_phase/test_stream"]
+        stream_ava_forgetting =last_metrics["StreamForgetting/eval_phase/test_stream"]
 
         # Getting Accuracy per Experience for client
         curr_accpexp = []
@@ -253,14 +264,18 @@ class FlowerClient(NumPyClient):
         hist_accpexp = global_eval_metrics["accuracy_per_exp"]
 
         # Calculating Running Cumalative Forgetting Measure
-        cm_fmpexp = []
-        for i, e in enumerate(hist_accpexp):
-            e = json.loads(e)
-            fm = e[i] - curr_accpexp[i];
-            cm_fmpexp.append(fm)
-        if cm_fmpexp:
-            cmfm = sum(cm_fmpexp)/len(cm_fmpexp)
+        if cfg.cl.split != "random":
+            cm_fmpexp = []
+            for i, e in enumerate(hist_accpexp):
+                e = json.loads(e)
+                fm = e[i] - curr_accpexp[i];
+                cm_fmpexp.append(fm)
+            if cm_fmpexp:
+                cmfm = sum(cm_fmpexp)/len(cm_fmpexp)
+            else:
+                cmfm = 0
         else:
+            cm_fmpexp = [0 for _ in range(NUM_EXP)]
             cmfm = 0
 
         # Checking Cumalative Forgetting Measure
@@ -292,6 +307,7 @@ class FlowerClient(NumPyClient):
                 "stream_accuracy": float(stream_acc),
                 "stream_loss": float(stream_loss),
                 "accuracy_per_experience": json.dumps(curr_accpexp),
+                "ava_forgetting_measure": float(stream_ava_forgetting),
                 "stepwise_forgetting_measure": float(swfm),
                 "cumalative_forgetting_measure":  float(cmfm),
                 "stepwise_forgetting_per_experience": json.dumps(sw_fmpexp),
