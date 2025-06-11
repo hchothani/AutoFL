@@ -4,6 +4,7 @@ from models.SimpleCNN import Net
 from workloads.CIFAR10CL import load_datasets 
 from clutils.make_experiences import split_dataset
 from clutils.clstrat import make_cl_strat 
+from clutils.create_benchmarks import make_benchmark
 
 #Import basic Modules
 import json
@@ -367,9 +368,12 @@ def client_fn(context: Context) -> Client:
     # Creating benchmarks 
     benchmark = benchmark_from_datasets(train=ava_train, test=ava_test)
 
+    # Testing Direct BM Creation
+    bm = make_benchmark(as_avalanche_dataset(train_data), as_avalanche_dataset(test_data))
+
     # Print ClientID
     print(f"---------------------------------LAUNCHING CLIENT: {partition_id}-----------------------------------------------")
 
-    return FlowerClient(context, net, benchmark, trainlen_per_exp, testlen_per_exp, partition_id).to_client()
+    return FlowerClient(context, net, bm, trainlen_per_exp, testlen_per_exp, partition_id).to_client()
 
 
