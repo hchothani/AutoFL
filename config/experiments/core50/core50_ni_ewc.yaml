@@ -1,0 +1,40 @@
+# core50 new instances (ni) scenario with elastic weight consolidation (ewc)
+
+dataset:
+  workload: core50
+  batch_size: 32
+  num_classes: 50  
+
+model:
+  name: wide_resnet 
+  pretrained: false
+  num_classes: 50
+
+cl:
+  strategy: ewc
+  scenario: ni  # new instances scenario
+  num_experiences: 8  # 8 experiences in NI scenario
+  ewc_lambda: 0.4  # importance weight for old tasks
+  ewc_decay_factor: null  # no decay
+  ewc_keep_importance_data: false
+
+training:
+  learning_rate: 0.001
+  epochs: 10
+
+server:
+  num_rounds: 16
+  num_clients: 5
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.2
+  epochs: 10
+
+wb:
+  project: autofl-testing
+  name: f_core50_ni_ewc_wide_resnet_fedavg 

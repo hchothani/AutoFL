@@ -1,0 +1,19 @@
+# continual learning configuration
+strategy: naive  # naive, domain, ewc, replay, hybrid
+num_experiences: 5
+split: random
+
+# ewc (elastic weight consolidation) parameters
+ewc_lambda: 0.4  # importance of preventing forgetting (0.1-10.0)
+ewc_decay_factor: null  # decay importance over time (optional)
+ewc_keep_importance_data: false  # keep data for importance calculation
+
+# experience replay parameters  
+replay_mem_size: 200  # buffer size for storing old samples
+replay_selection: random  # random, herding, closest_to_mean
+
+# hybrid strategy uses both ewc and replay parameters above
+
+# TODOs:
+# online_learning: false  # true for online continual learning
+# task_labels: false  # true if task ids are available during inference 

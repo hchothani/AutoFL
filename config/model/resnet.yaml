@@ -1,0 +1,5 @@
+model:
+  name: resnet18
+  pretrained: true
+  num_classes: 10  # Will be overridden by workload
+  freeze_backbone: false 

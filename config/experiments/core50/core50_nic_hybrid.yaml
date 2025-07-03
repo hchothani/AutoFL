@@ -1,0 +1,39 @@
+# core50 new instances and classes (nic) scenario with hybrid (ewc + replay)
+
+dataset:
+  workload: core50
+  batch_size: 32
+  num_classes: 50  
+
+model:
+  name: wide_resnet 
+  pretrained: false
+  num_classes: 50  # variable classes per task
+
+cl:
+  strategy: hybrid
+  scenario: nic  # New Instances and Classes scenario
+  num_experiences: 79  # 79 experiences in NIC scenario (most challenging) - from standard avalanche benchmark doccumentation
+  ewc_lambda: 0.4  # ewc importance weight
+  replay_mem_size: 1000  # replay buffer size
+
+training:
+  learning_rate: 0.001
+  epochs: 5  # less epochs due to many experiences
+
+server:
+  num_rounds: 40  # bigger dataset will need more rounds then like cifar
+  num_clients: 5
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.2
+  epochs: 5
+
+wb:
+  project: autofl-testing
+  name: f_core50_nic_hybrid_wide_resnet_fedavg 

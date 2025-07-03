@@ -180,3 +180,12 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/pythonk
+
+
+## Logs and other files
+
+outputs/*
+autofl_env/*
+logs/*
+data/*
+temp_config.yaml

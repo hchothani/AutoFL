@@ -1,0 +1,17 @@
+# mobilenet model configuration
+name: mobilenet
+num_classes: 10  # will be overridden by dataset config
+
+# mobilenet specific parameters
+version: v2  # v2, v3_small, v3_large
+pretrained: false  # use imagenet pretrained weights
+
+# model info
+# params_count_v2: ~3.5M  # mobilenet v2 parameters
+# params_count_v3_small: ~2.5M  # mobilenet v3 small 
+# params_count_v3_large: ~5.4M  # mobilenet v3 large
+
+# # training recommendations
+# recommended_lr_v2: 0.001
+# recommended_lr_v3: 0.0005
+# recommended_batch_size: 64 

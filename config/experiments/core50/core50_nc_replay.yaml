@@ -1,0 +1,39 @@
+# core50 new classes (nc) scenario with experience replay
+
+dataset:
+  workload: core50
+  batch_size: 32
+  num_classes: 50  
+
+model:
+  name: wide_resnet 
+  pretrained: false
+  num_classes: 5  # Classes per task (first task has 10, others have 5)
+
+cl:
+  strategy: replay
+  scenario: nc  # New Classes scenario
+  num_experiences: 9  # 9 experiences in NC scenario
+  replay_mem_size: 1000  # buffer size for old samples
+  replay_selection: random
+
+training:
+  learning_rate: 0.001
+  epochs: 10
+
+server:
+  num_rounds: 18
+  num_clients: 5
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.5
+  epochs: 10
+
+wb:
+  project: autofl-testing
+  name: f_core50_nc_replay_wide_resnet_fedavg_gpu

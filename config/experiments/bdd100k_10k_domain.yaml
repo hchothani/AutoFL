@@ -1,0 +1,35 @@
+# BDD100K-10k Domain Incremental
+defaults:
+  - _self_
+  - /dataset: default
+  - /model: simple_cnn
+  - /cl: default
+  - /server: default
+  - /training: default
+  - /client: default
+  - /wb: default
+
+dataset:
+  workload: bdd100k_10k
+  batch_size: 16
+  num_classes: 10
+
+model:
+  name: simple_cnn
+
+cl:
+  strategy: domain
+  num_experiences: 8
+
+training:
+  learning_rate: 0.001
+  epochs: 5
+
+server:
+  num_rounds: 5
+  num_clients: 5
+  fraction_fit: 1.0
+
+wb:
+  project: autofl-testing
+  name: bdd100k10k_domain_simplecnn 

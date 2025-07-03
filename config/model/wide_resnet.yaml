@@ -1,0 +1,12 @@
+# wide resnet model configuration
+name: wide_resnet
+pretrained: false
+
+# wide resnet specific parameters
+depth: 28
+widen_factor: 10  # wrn-28-10 has 36.5m parameters
+dropout: 0.3
+
+# for cifar100
+# but model factory will automatically determine this based on workload
+num_classes: 100 

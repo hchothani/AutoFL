@@ -1,0 +1,40 @@
+# split cifar10 with experience replay
+
+dataset:
+  workload: split_cifar10
+  batch_size: 64
+  num_classes: 10  # total classes (will be split across tasks)
+
+model:
+  name: mobilenet
+  version: v2
+  pretrained: false
+  # num_classes: 2  # classes per task (10 classes / 5 tasks = 2 per task)
+  # num_classes automatically determined: 2 per task (10 classes / 5 tasks)
+
+cl:
+  strategy: replay
+  num_experiences: 5  # split 10 classes into 5 tasks
+  replay_mem_size: 500  # buffer size for old samples
+  replay_selection: random
+
+training:
+  learning_rate: 0.001
+  epochs: 5
+
+server:
+  num_rounds: 15
+  num_clients: 5
+  strategy: fedprox
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.0
+  epochs: 10
+
+wb:
+  project: autofl-testing
+  name: f_split_cifar10_replay_mobilenet_fedprox 

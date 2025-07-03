@@ -1,0 +1,12 @@
+workload:
+  name: cifar100
+  domains:
+    - original
+    - brightness
+    - contrast
+    - blur
+  experiences_per_domain: 2
+  transform_params:
+    brightness: 0.5
+    contrast: 0.5
+    blur_kernel: 3 

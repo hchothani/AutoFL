@@ -1,0 +1,22 @@
+defaults:
+  - override /workload: cifar10
+  - override /model: simple_cnn
+  - _self_
+  
+dataset:
+  workload: cifar10
+  
+model:
+  name: simple_cnn
+  num_classes: 10
+  
+cl:
+  strategy: domain
+  num_experiences: 8  # 4 domains × 2 experiences each
+  
+training:
+  learning_rate: 0.001
+  
+wb:
+  project: autofl-testing
+  name: cifar10_domain_simple_cnn 

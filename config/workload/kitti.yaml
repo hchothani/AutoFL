@@ -1,0 +1,13 @@
+workload:
+  name: kitti
+  domains:
+    weather:
+      - sunny
+      - cloudy
+      - rainy
+    road_type:
+      - urban
+      - highway
+      - residential
+  experiences_per_domain: 2
+  image_size: [224, 224] 

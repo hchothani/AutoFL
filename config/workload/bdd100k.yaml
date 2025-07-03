@@ -1,0 +1,13 @@
+workload:
+  name: bdd100k
+  domains:
+    weather:
+      - clear
+      - cloudy
+      - rainy
+      - snowy
+    timeofday:
+      - daytime
+      - night
+  experiences_per_domain: 2
+  image_size: [224, 224] 

@@ -1,0 +1,5 @@
+num_cpus: 8
+num_gpus: 0.2
+type: normal
+epochs: 10
+falloff: 0.0 

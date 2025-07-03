@@ -1,0 +1,36 @@
+# CIFAR100 Domain CL with GPU
+dataset:
+  workload: cifar100
+  batch_size: 64
+  num_classes: 100
+  split: niid
+  niid:
+    alpha: 0.9  # moderate heterogeneity
+
+model:
+  name: resnet
+  num_classes: 100
+
+cl:
+  strategy: domain
+  num_experiences: 8
+
+training:
+  learning_rate: 0.0001
+  epochs: 10
+
+server:
+  num_rounds: 10
+  num_clients: 5
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.2  # 20% GPU per client
+  epochs: 10
+
+wb:
+  project: autofl-testing
+  name: f_cifar100_domain_resnet_niid_0.9_gpu 

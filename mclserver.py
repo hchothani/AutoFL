@@ -9,7 +9,9 @@ from omegaconf import OmegaConf
 
 from clutils.scallbacks import evaluate_metrics_aggregation_fn, fit_metrics_aggregation_fn, fit_config, eval_config
 
-cfg = OmegaConf.load('config/config.yaml')
+#Setting up Configuration
+from config_utils import load_config
+cfg = load_config()
 
 NUM_ROUNDS = cfg.server.num_rounds
 NUM_CLIENTS = cfg.server.num_clients

@@ -1,0 +1,37 @@
+# rotated mnist with experience replay
+
+dataset:
+  workload: rotated_mnist
+  batch_size: 64
+  num_classes: 10
+
+model:
+  name: simple_cnn
+  num_classes: 10
+
+cl:
+  strategy: replay
+  num_experiences: 6  # 6 rotation angles: 0°, 36°, 72°, 108°, 144°, 180°
+  replay_mem_size: 500  # buffer size for old samples
+  replay_selection: random
+
+training:
+  learning_rate: 0.001
+  epochs: 5
+
+server:
+  num_rounds: 12
+  num_clients: 5
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.0  # CPU only for MNIST
+  epochs: 5
+
+wb:
+  project: autofl-testing
+  name: f_rotated_mnist_replay_simple_cnn_fedavg 

@@ -1,0 +1,22 @@
+defaults:
+  - override /workload: cifar100
+  - override /model: resnet
+  - _self_
+  
+dataset:
+  workload: cifar100
+  
+model:
+  name: resnet
+  num_classes: 100
+  
+cl:
+  strategy: naive
+  num_experiences: 5
+  
+training:
+  learning_rate: 0.0001  # lower lr for resnet
+  
+wb:
+  project: autofl-testing
+  name: cifar100_naive_resnet

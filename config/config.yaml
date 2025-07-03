@@ -1,9 +1,9 @@
 ---
 client:
-  num_cpus: 2
-  num_gpus: 0.25
+  num_cpus: 8
+  num_gpus: 0.20
   type: normal
-  epochs: 3
+  epochs: 10
   falloff: 0.0
 server:
   num_clients: 5
@@ -15,16 +15,38 @@ server:
   strategy: fedavg
 cl:
   num_experiences: 5
-  strategy: naive
+  strategy: naive # naive or domain | domain is for domain incremental learning, naive is for experience incrental learning (afaik)
   split: random
+model:
+  name: simple_cnn
+  num_classes: 10  # Number of output classes (10 for CIFAR10, 100 for CIFAR100)
 dataset:
   workload: cifar10
   batch_size: 32
   split: iid
-  niid:
-    alpha: 1.0
-    seed: 42
+  # niid:
+  #   alpha: 1.0
+  #   seed: 42
 wb:
-  project: test-autofl 
-  name: testing
+  project: autofl-testing
+  # name: cifar10_naive_simple_cnn
+
+# defaults:
+#   - workload: cifar10  # Choose workload: cifar10, cifar100, bdd100k, kitti
+#   - model: simple_cnn      # Choose model architecture
+#   - _self_
+
+# server:
+#   num_rounds: 10
+#   num_clients: 10
+#   fraction_fit: 0.8
+#   fraction_eval: 0.2
+#   min_fit: 8
+#   min_eval: 2
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  epochs: 5
+  optimizer: adam
 

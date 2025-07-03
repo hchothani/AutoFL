@@ -1,0 +1,32 @@
+# BDD100K-10k Domain Incremental with GPU optimization
+dataset:
+  workload: bdd100k_10k
+  batch_size: 64  # Increased batch size for GPU
+  num_classes: 10
+
+model:
+  name: resnet  # Using ResNet for better GPU utilization
+
+cl:
+  strategy: domain
+  num_experiences: 8
+
+training:
+  learning_rate: 0.0001  # Lower LR for ResNet
+  epochs: 10  # More epochs with GPU
+
+server:
+  num_rounds: 10
+  num_clients: 5
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.2  # 20% GPU per client (5 clients share 1 GPU)
+  epochs: 10
+
+wb:
+  project: autofl-gpu-testing
+  name: bdd100k10k_domain_resnet_gpu 
