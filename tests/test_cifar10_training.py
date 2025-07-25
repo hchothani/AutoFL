@@ -17,6 +17,7 @@ from models.SimpleCNN import Net
 from clutils.clstrat import make_cl_strat
 from clutils.make_experiences import split_dataset
 from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
+from algorithms.fedma import FedMAStrategy
 
 # load config and set to CIFAR10
 cfg = OmegaConf.load('config/config.yaml')
@@ -177,6 +178,35 @@ def test_cifar10_domain():
         traceback.print_exc()
         return False
 
+def test_fedma_minimal():
+    """minimal test for fedma strategy with simplecnn and random data"""
+    print("\n" + "="*50)
+    print("testing FedMAStrategy minimal matching/aggregation")
+    print("="*50)
+    try:
+        # create two simplecnn models
+        net1 = Net()
+        net2 = Net()
+        # randomize weights
+        for p in net1.parameters():
+            p.data.normal_()
+        for p in net2.parameters():
+            p.data.normal_()
+        # create fedma strategy
+        fedma = FedMAStrategy(net1, ma_config={}, num_clients=2)
+        fedma.client_models[0].load_state_dict(net1.state_dict())
+        fedma.client_models[1].load_state_dict(net2.state_dict())
+        # run aggregation
+        global_model = fedma.aggregate([fedma.client_models[0], fedma.client_models[1]])
+        print("FedMA aggregation completed. Global model output shape:", global_model(torch.randn(1,3,32,32)).shape)
+        print("FedMA minimal test passed.")
+        return True
+    except Exception as e:
+        print(f"FedMA minimal test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def main():
     print("starting CIFAR10 workload tests...")
     print(f"model configured for {cfg.model.num_classes} classes")
@@ -201,4 +231,5 @@ def main():
     print("="*50)
 
 if __name__ == "__main__":
-    main() 
+    main()
+    test_fedma_minimal() 

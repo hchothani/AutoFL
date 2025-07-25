@@ -11,68 +11,99 @@ import torch
 from torch import nn
 from typing import Any, Dict, List, Optional
 import copy
+import collections
+import math
+
+class LoRALinear(nn.Module):
+    def __init__(self, base_layer: nn.Linear, rank: int = 4, alpha: float = 1.0):
+        super().__init__()
+        self.base = base_layer
+        self.rank = rank
+        self.alpha = alpha
+        self.lora_a = nn.Parameter(torch.zeros((rank, base_layer.in_features)))
+        self.lora_b = nn.Parameter(torch.zeros((base_layer.out_features, rank)))
+        nn.init.kaiming_uniform_(self.lora_a, a=math.sqrt(5))
+        nn.init.zeros_(self.lora_b)
+        self.scaling = alpha / rank
+        self.frozen = True
+        for p in self.base.parameters():
+            p.requires_grad = False
+    def forward(self, x):
+        base_out = self.base(x)
+        lora_out = (self.lora_b @ (self.lora_a @ x.T)).T  # (batch, out)
+        return base_out + self.scaling * lora_out
+
+def inject_lora(model, rank=4, alpha=1.0, _prefix=''):
+    """Recursively replace all nn.Linear layers with LoRALinear, only in nn.Module children. Debug print every replacement."""
+    for name, module in model.named_children():
+        full_name = f'{_prefix}.{name}' if _prefix else name
+        if isinstance(module, nn.Linear):
+            print(f'[LoRA Inject] Replacing {full_name} ({type(module)}) with LoRALinear')
+            lora_layer = LoRALinear(module, rank=rank, alpha=alpha)
+            setattr(model, name, lora_layer)
+        elif isinstance(module, nn.Module):
+            inject_lora(module, rank=rank, alpha=alpha, _prefix=full_name)
+    return model
 
 class PLoRAStrategy:
     def __init__(self, model: nn.Module, plora_config: Dict[str, Any], num_clients: int = 2, **kwargs):
-        """
-        Args:
-            model: PyTorch model to be used for federated continual learning.
-            plora_config: Configuration for LoRA adaptation (e.g., rank, layers, etc.)
-            num_clients: number of clients in federation
-            kwargs: Additional PLoRA-specific parameters.
-        """
-        self.model = model
+        self.rank = plora_config.get('rank', 4)
+        self.alpha = plora_config.get('alpha', 1.0)
+        self.model = inject_lora(model, rank=self.rank, alpha=self.alpha)
+        print('[LoRA Inject] Model after injection:')
+        print(self.model)
         self.plora_config = plora_config
         self.num_clients = num_clients
-        # initialize LoRA modules for each client
-        self.client_loras = [self.initialize_lora() for _ in range(num_clients)]
-        # store global LoRA parameters
+        # collect LoRA layer names
+        self.lora_layers = [n for n, m in self.model.named_modules() if isinstance(m, LoRALinear)]
+        # per-client LoRA params: {client: {layer: {'a':..., 'b':...}}}
+        self.client_loras = [self._get_lora_params() for _ in range(num_clients)]
         self.global_lora = copy.deepcopy(self.client_loras[0])
 
-    def initialize_lora(self):
-        # initialize LoRA modules for parameter-efficient adaptation
-        rank = self.plora_config.get('rank', 4)
-        in_dim = self.plora_config.get('in_dim', 128)
-        out_dim = self.plora_config.get('out_dim', 128)
-        # create low-rank matrices a and b
-        a = torch.nn.Parameter(torch.randn(out_dim, rank))
-        b = torch.nn.Parameter(torch.randn(rank, in_dim))
-        return {'a': a, 'b': b}
+    def _get_lora_params(self):
+        params = {}
+        for name, module in self.model.named_modules():
+            if isinstance(module, LoRALinear):
+                params[name] = {
+                    'a': module.lora_a.data.clone(),
+                    'b': module.lora_b.data.clone()
+                }
+        return params
 
-    def get_lora_params(self):
-        # extract the current LoRA parameters from the model
-        return {'a': self.model.lora_a.data.clone(), 'b': self.model.lora_b.data.clone()}
-
-    def set_lora_params(self, lora_params: Dict[str, Any]):
-        # set the LoRA parameters in the model
-        self.model.lora_a.data.copy_(lora_params['a'])
-        self.model.lora_b.data.copy_(lora_params['b'])
+    def _set_lora_params(self, lora_params):
+        for name, module in self.model.named_modules():
+            if isinstance(module, LoRALinear) and name in lora_params:
+                module.lora_a.data.copy_(lora_params[name]['a'])
+                module.lora_b.data.copy_(lora_params[name]['b'])
 
     def aggregate(self, client_loras: List[Dict[str, Any]]):
-        # aggregate client LoRA parameters (FedAvg)
-        a_stack = torch.stack([cl['a'] for cl in client_loras], dim=0)
-        b_stack = torch.stack([cl['b'] for cl in client_loras], dim=0)
-        agg_a = torch.mean(a_stack, dim=0)
-        agg_b = torch.mean(b_stack, dim=0)
-        self.global_lora = {'a': agg_a, 'b': agg_b}
-        return self.global_lora
+        # FedAvg per layer
+        agg = {}
+        for layer in self.lora_layers:
+            a_stack = torch.stack([cl[layer]['a'] for cl in client_loras], dim=0)
+            b_stack = torch.stack([cl[layer]['b'] for cl in client_loras], dim=0)
+            agg[layer] = {
+                'a': torch.mean(a_stack, dim=0),
+                'b': torch.mean(b_stack, dim=0)
+            }
+        self.global_lora = agg
+        return agg
 
     def train_round(self, data, task_id: int, client_id: int):
-        # perform a training round for a given task (LoRA-based local training)
-        self.set_lora_params(self.client_loras[client_id])
+        self._set_lora_params(self.client_loras[client_id])
         self.model.train()
-        optimizer = torch.optim.Adam([self.model.lora_a, self.model.lora_b], lr=0.001)
+        lora_params = [p for n, m in self.model.named_modules() if isinstance(m, LoRALinear) for p in [m.lora_a, m.lora_b]]
+        optimizer = torch.optim.Adam(lora_params, lr=0.001)
         for x, y in data:
             optimizer.zero_grad()
             out = self.model(x)
             loss = nn.CrossEntropyLoss()(out, y)
             loss.backward()
             optimizer.step()
-        self.client_loras[client_id] = self.get_lora_params()
-        return self.get_lora_params()
+        self.client_loras[client_id] = self._get_lora_params()
+        return self._get_lora_params()
 
     def evaluate(self, data):
-        # evaluate the model on the given data
         self.model.eval()
         correct = 0
         total = 0

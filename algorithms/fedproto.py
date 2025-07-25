@@ -24,7 +24,8 @@ class FedProtoStrategy:
         self.model = model
         self.proto_config = proto_config
         self.num_clients = num_clients
-        # initialize prototypes for each client (dict: class_id -> prototype tensor)
+        self.lambda_proto = proto_config.get('lambda_proto', 1.0)
+        # initialize prototypes for each client (dict: class_id -> (prototype tensor, count))
         self.client_protos = [{} for _ in range(num_clients)]
         # store global prototypes (dict: class_id -> prototype tensor)
         self.global_protos = {}
@@ -35,23 +36,29 @@ class FedProtoStrategy:
         pass
 
     def get_prototype_params(self, client_id: int):
-        # extract the current prototype parameters for a client
+        # extract the current prototype parameters for a client (deepcopy for safety)
         return copy.deepcopy(self.client_protos[client_id])
 
     def set_prototype_params(self, proto_params: Dict[str, Any], client_id: int):
         # set the prototype parameters for a client
         self.client_protos[client_id] = copy.deepcopy(proto_params)
 
-    def aggregate(self, client_protos: List[Dict[int, torch.Tensor]]):
-        # aggregate client prototype parameters (FedAvg per class)
+    def aggregate(self, client_protos: List[Dict[int, tuple]]):
+        # aggregate client prototype parameters (weighted average per class)
         all_classes = set()
         for cp in client_protos:
             all_classes.update(cp.keys())
         agg_protos = {}
         for cls in all_classes:
-            cls_protos = [cp[cls] for cp in client_protos if cls in cp]
-            stacked = torch.stack(cls_protos, dim=0)
-            agg_protos[cls] = torch.mean(stacked, dim=0)
+            weighted_sum = 0
+            total_count = 0
+            for cp in client_protos:
+                if cls in cp:
+                    proto, count = cp[cls]
+                    weighted_sum += proto * count
+                    total_count += count
+            if total_count > 0:
+                agg_protos[cls] = weighted_sum / total_count
         self.global_protos = agg_protos
         return agg_protos
 
@@ -62,13 +69,13 @@ class FedProtoStrategy:
         optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
         features = {}
         counts = {}
+        # accumulate features and counts for each class
         for x, y in data:
             optimizer.zero_grad()
             out = self.model(x)
-            loss = nn.CrossEntropyLoss()(out, y)
-            loss.backward()
-            optimizer.step()
-            # collect features for prototype update
+            ce_loss = nn.CrossEntropyLoss()(out, y)
+            # prototype regularization loss
+            proto_reg = 0.0
             with torch.no_grad():
                 feats = self.model(x)
                 for i, label in enumerate(y):
@@ -79,10 +86,20 @@ class FedProtoStrategy:
                     else:
                         features[label] += feats[i].clone()
                         counts[label] += 1
-        # update prototypes as mean of features per class
+            # after batch, compute batch prototypes
+            batch_protos = {lbl: features[lbl] / counts[lbl] for lbl in features}
+            # prototype regularization: sum squared distance to global prototype (if available)
+            for lbl in batch_protos:
+                if lbl in self.global_protos:
+                    proto_reg += torch.norm(batch_protos[lbl] - self.global_protos[lbl]) ** 2
+            loss = ce_loss + self.lambda_proto * proto_reg
+            loss.backward()
+            optimizer.step()
+        # update prototypes as mean of features per class, and store counts
         for label in features:
             features[label] /= counts[label]
-        self.client_protos[client_id] = features
+        # store as (prototype, count)
+        self.client_protos[client_id] = {lbl: (features[lbl], counts[lbl]) for lbl in features}
         return self.get_prototype_params(client_id)
 
     def evaluate(self, data):
