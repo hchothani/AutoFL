@@ -329,13 +329,28 @@ class FlowerClient(NumPyClient):
         results.append(cl_strategy.eval(test_stream))
         last_metrics = evaluation.get_last_metrics()
         
-        # Handle different stream naming conventions
-        stream_suffix = "/eval_phase/test_stream"
-        if not any(key.endswith(stream_suffix) for key in last_metrics.keys()):
-            stream_suffix = "/eval_phase/test_datasets_stream"
+        def find_metric_key(prefix, metrics_dict):
+            """Find the first key that starts with the given prefix."""
+            for key in metrics_dict.keys():
+                if key.startswith(prefix):
+                    return key
+            return None
+        
+        # Try to find loss and accuracy keys with different possible suffixes
+        loss_key = find_metric_key("Loss_Stream/eval_phase/test_stream", last_metrics)
+        if loss_key is None:
+            loss_key = find_metric_key("Loss_Stream/eval_phase/test_datasets_stream", last_metrics)
+        
+        acc_key = find_metric_key("Top1_Acc_Stream/eval_phase/test_stream", last_metrics)
+        if acc_key is None:
+            acc_key = find_metric_key("Top1_Acc_Stream/eval_phase/test_datasets_stream", last_metrics)
+        
+        if loss_key is None or acc_key is None:
+            print("Available metric keys:", list(last_metrics.keys()))
+            raise KeyError(f"Could not find required metrics. Loss key: {loss_key}, Acc key: {acc_key}")
             
-        stream_loss = last_metrics[f"Loss_Stream{stream_suffix}"]
-        stream_acc = last_metrics[f"Top1_Acc_Stream{stream_suffix}"]
+        stream_loss = last_metrics[loss_key]
+        stream_acc = last_metrics[acc_key]
 
         # Getting Accuracy per Experience for client
         curr_accpexp = []
@@ -397,6 +412,22 @@ def client_fn(context: Context) -> Client:
         testlen_per_exp = [len(exp) for exp in test_experiences]
         from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
         benchmark = benchmark_from_datasets(train=train_experiences, test=test_experiences)
+    elif isinstance(dataset_result, dict):
+        # CORe50 or other workloads that return a dictionary with benchmark and metadata
+        benchmark = dataset_result["benchmark"]
+        n_experiences = cfg.cl.num_experiences
+        
+        # Handle CLScenario objects
+        if hasattr(benchmark, 'train_stream'):
+            # Standard benchmark
+            trainlen_per_exp = [len(exp.dataset) for exp in benchmark.train_stream]
+            testlen_per_exp = [len(exp.dataset) for exp in benchmark.test_stream]
+        elif hasattr(benchmark, 'train_datasets_stream'):
+            # CLScenario object
+            trainlen_per_exp = [len(exp.dataset) for exp in benchmark.train_datasets_stream]
+            testlen_per_exp = [len(exp.dataset) for exp in benchmark.test_datasets_stream]
+        else:
+            raise ValueError(f"Unknown benchmark type: {type(benchmark)}")
     else:
         # DomainCL: benchmark object
         benchmark = dataset_result
