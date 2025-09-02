@@ -11,8 +11,14 @@ import torch
 from torch import nn
 from torch.optim import Adam
 import torch.nn.functional as F
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import copy
+import numpy as np
+
+# Flower imports for custom server strategy
+from flwr.server.strategy import Strategy
+from flwr.common import Parameters, FitRes, EvaluateRes, Scalar
+from flwr.server.client_proxy import ClientProxy
 
 class FedWeITStrategy:
     def __init__(self, model: nn.Module, sparsity: float = 0.5, num_clients: int = 2, l1_lambda: float = 0.1, l2_lambda: float = 100.0, device: str = 'cpu', **kwargs):
@@ -41,6 +47,10 @@ class FedWeITStrategy:
         self.client_task_attn = [{} for _ in range(num_clients)]  # list of dicts: client -> {task_id: attn vector}
         # knowledge base: stores all task-adaptive params for all clients/tasks
         self.knowledge_base = []  # list of (client_id, task_id, task-adaptive param)
+        
+        # state tracking for avalanche interface
+        self.current_client_id = 0  # will be set dynamically
+        self.current_task_id = 0   # will be set dynamically
 
     def _get_model_params(self):
         # get a state dict of model parameters
@@ -170,4 +180,117 @@ class FedWeITStrategy:
                 pred = out.argmax(dim=1)
                 correct += (pred == y).sum().item()
                 total += y.size(0)
-        return correct / total if total > 0 else 0.0 
+        return correct / total if total > 0 else 0.0
+
+    # avalanche interface methods
+    def train(self, experience):
+        """
+        train method that matches avalanche interface.
+        extracts task_id and client_id from the experience and calls train_task.
+        """
+        # extract task id from experience
+        task_id = experience.current_experience
+        
+        # for federated learning, we need to determine client_id
+        # since we don't have direct access to client_id from experience,
+        # we'll use the current_client_id that should be set externally
+        client_id = self.current_client_id
+        
+        # extract data from experience
+        # experience.dataset is an avalanche dataset, we need to create a dataloader
+        from torch.utils.data import DataLoader
+        dataloader = DataLoader(experience.dataset, batch_size=32, shuffle=True)
+        
+        print(f"[FedWeIT] Training on experience {task_id} for client {client_id}")
+        
+        # call the original train_task method
+        return self.train_task(dataloader, task_id, client_id, epochs=1, lr=1e-3)
+    
+    def eval(self, test_stream):
+        """
+        eval method that matches avalanche interface.
+        evaluates on all experiences in the test stream.
+        """
+        results = {}
+        
+        # get current client_id
+        client_id = self.current_client_id
+        
+        print(f"[FedWeIT] Evaluating client {client_id} on test stream")
+        
+        # iterate through all experiences in test stream
+        for experience in test_stream:
+            task_id = experience.current_experience
+            
+            # skip if we haven't trained on this task yet
+            if task_id not in self.client_task_masks[client_id]:
+                print(f"[FedWeIT] Skipping evaluation on task {task_id} - not trained yet")
+                continue
+            
+            # create dataloader from experience dataset
+            from torch.utils.data import DataLoader
+            dataloader = DataLoader(experience.dataset, batch_size=32, shuffle=False)
+            
+            # evaluate on this experience
+            accuracy = self.evaluate(dataloader, task_id, client_id)
+            
+            # store results in the format expected by avalanche
+            results[f"Top1_Acc_Exp/eval_phase/test_stream/Task{task_id:03d}"] = accuracy
+            
+        print(f"[FedWeIT] Evaluation results: {results}")
+        return results
+
+class FedWeITServerStrategy:
+    """
+    Custom server aggregation logic for FedWeIT algorithm.
+    Implements server-side aggregation of masked base parameters and task-adaptive parameters.
+    
+    Note: This is a simplified server strategy that implements the core FedWeIT aggregation logic.
+    In a full implementation, this would inherit from flwr.server.strategy.Strategy.
+    """
+    
+    def __init__(self, **kwargs):
+        # FedWeIT-specific state
+        self.base_params = None
+        self.round = 0
+        print("[FedWeIT Server] Initialized FedWeIT server aggregation strategy")
+    
+    def aggregate_client_updates(self, client_updates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Core FedWeIT aggregation logic: average masked base parameters.
+        
+        Args:
+            client_updates: List of dicts containing 'masked_base' and 'task_adaptive' from clients
+            
+        Returns:
+            Aggregated parameters dict
+        """
+        if not client_updates:
+            return {}
+        
+        print(f"[FedWeIT Server] Aggregating {len(client_updates)} client updates")
+        
+        # FedWeIT aggregation: average masked base parameters
+        agg_params = {}
+        first_update = client_updates[0]
+        
+        if 'masked_base' in first_update:
+            agg_params['masked_base'] = {}
+            for param_name in first_update['masked_base']:
+                # Collect all client masked_base params for this layer
+                param_values = []
+                for update in client_updates:
+                    if 'masked_base' in update and param_name in update['masked_base']:
+                        param_values.append(update['masked_base'][param_name])
+                
+                if param_values:
+                    # Average the masked base parameters
+                    stacked = torch.stack(param_values, dim=0)
+                    agg_params['masked_base'][param_name] = torch.mean(stacked, dim=0)
+        
+        # Store aggregated base params for next round
+        if 'masked_base' in agg_params:
+            self.base_params = agg_params['masked_base']
+        
+        print(f"[FedWeIT Server] Aggregation complete")
+        return agg_params 

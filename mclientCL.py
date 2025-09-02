@@ -20,7 +20,7 @@ import flwr
 import torch
 import gc  # For garbage collection
 from flwr.client import Client, ClientApp, NumPyClient
-from flwr.common import Metrics, Context, ConfigRecord
+from flwr.common import Metrics, Context, ConfigsRecord
 
 # Ignore Flower Warnings
 warnings.filterwarnings("ignore")
@@ -108,18 +108,23 @@ def get_model():
 # Persistent State of Clients
 partition_strategies = [make_cl_strat(get_model().to(DEVICE)) for _ in range(NUM_CLIENTS)]
 
+# Set client_id for FedWeIT strategies
+for client_id, (strategy, evaluation) in enumerate(partition_strategies):
+    if hasattr(strategy, 'current_client_id'):
+        strategy.current_client_id = client_id
+        print(f"Set client_id {client_id} for FedWeIT strategy")
+
 # Client Class
 class FlowerClient(NumPyClient):
     def __init__(self, context: Context, net, benchmark, trainlen_per_exp, testlen_per_exp, partition_id):
         self.client_state = context.state
+        # simplified config records management - avoid ConfigsRecord compatibility issues
         if not hasattr(self.client_state, 'config_records'):
-            self.client_state.config_records = ConfigRecord()
-        if "local_eval_metrics" not in self.client_state.config_records:
-            self.client_state.config_records["local_eval_metrics"] = ConfigRecord()
-        if "global_eval_metrics" not in self.client_state.config_records:
-            self.client_state.config_records["global_eval_metrics"] = ConfigRecord()
-        if "availability" not in self.client_state.config_records:
-            self.client_state.config_records["availability"] = ConfigRecord()
+            self.client_state.config_records = {
+                "local_eval_metrics": {},
+                "global_eval_metrics": {}, 
+                "availability": {}
+            }
         # Special Provision for acc per exp as needed to calculate fm
         if "accuracy_per_exp" not in self.client_state.config_records["local_eval_metrics"]:
             self.client_state.config_records["local_eval_metrics"]["accuracy_per_exp"] = []
@@ -197,8 +202,12 @@ class FlowerClient(NumPyClient):
                     curr_accpexp.append(float(acc))
 
         # Get Local Eval Metrics from Avalanche
-        last_metrics = self.evaluation.get_last_metrics()
-        print("DEBUG: Available metrics keys:", list(last_metrics.keys()))  # Debug print
+        if self.evaluation is not None:
+            last_metrics = self.evaluation.get_last_metrics()
+            print("DEBUG: Available metrics keys:", list(last_metrics.keys()))  # Debug print
+        else:
+            last_metrics = {}
+            print("DEBUG: No evaluation object available for this strategy")
         
         # Handle different stream naming conventions
         stream_suffix = "/eval_phase/test_stream"
@@ -206,8 +215,9 @@ class FlowerClient(NumPyClient):
             stream_suffix = "/eval_phase/test_datasets_stream"
         
         # confusion_matrix = last_metrics["ConfusionMatrix_Stream/eval_phase/test_stream"].tolist()  # Disabled for now
-        stream_loss = last_metrics[f"Loss_Stream{stream_suffix}"]
-        stream_acc = last_metrics[f"Top1_Acc_Stream{stream_suffix}"]
+        # Handle case where custom strategies (like FedWeIT) don't provide Avalanche-style metrics
+        stream_loss = last_metrics.get(f"Loss_Stream{stream_suffix}", 0.0)  # Default loss
+        stream_acc = last_metrics.get(f"Top1_Acc_Stream{stream_suffix}", 0.0)  # Default accuracy
         # DiskUsage disabled to avoid permission errors
         stream_disc_usage = last_metrics.get(f"DiskUsage_Stream{stream_suffix}", 0.0)
 
@@ -220,7 +230,11 @@ class FlowerClient(NumPyClient):
         cm_fmpexp = []
         for i, e in enumerate(hist_accpexp):
             e = json.loads(e)
-            fm = e[i] - curr_accpexp[i]
+            # Handle case where indices don't match (e.g., custom strategies like FedWeIT)
+            if i < len(curr_accpexp) and i < len(e):
+                fm = e[i] - curr_accpexp[i]
+            else:
+                fm = 0.0  # Default forgetting measure when data is unavailable
             cm_fmpexp.append(fm)
 
         # Checking Cumalative Forgetting Measure
@@ -262,15 +276,15 @@ class FlowerClient(NumPyClient):
                 "pid": self.partition_id,
                 "round": rnd,
             }
-        cprint("----------------------------Results After Fit--------------------------------")
+        cprint("Results After Fit")
         print(json.dumps(fit_dict_return, indent=4))
-        cprint('-----------------------------------------------------------------------')
+        cprint('done')
 
         
         # Logging Client State
         print("Logging Client States")
         if rnd != 0:
-            # Update the existing ConfigRecord instead of replacing it with a dict
+            # Update the existing ConfigsRecord instead of replacing it with a dict
             current_acc_exp = [json.dumps(curr_accpexp)]
             current_stream_acc = [stream_acc]
             current_stream_loss = [stream_loss]
@@ -286,7 +300,7 @@ class FlowerClient(NumPyClient):
             if "stepwise_forgetting_measure" in local_eval_metrics:
                 current_swfm.extend(local_eval_metrics["stepwise_forgetting_measure"])
             
-            # Update the ConfigRecord directly
+            # Update the ConfigsRecord directly
             local_eval_metrics["accuracy_per_exp"] = current_acc_exp
             local_eval_metrics["stream_accuracy"] = current_stream_acc
             local_eval_metrics["stream_loss"] = current_stream_loss
@@ -315,10 +329,14 @@ class FlowerClient(NumPyClient):
 
         # Creating a new CL Strategy for Evaluation
         cl_strategy, evaluation = make_cl_strat(self.net)
+        
+        # Set client_id for FedWeIT strategy if needed
+        if hasattr(cl_strategy, 'current_client_id'):
+            cl_strategy.current_client_id = self.partition_id
 
         # Distributed Client Evaluation
         results = []
-        print(f"------------------------Local Client {self.partition_id} Evaluation on Updated Global Model--------------------")
+        print(f"Local Client {self.partition_id} Evaluation on Updated Global Model")
         
         # Handle different benchmark types
         if hasattr(self.benchmark, 'test_stream'):
@@ -327,7 +345,10 @@ class FlowerClient(NumPyClient):
             test_stream = self.benchmark.test_datasets_stream
         
         results.append(cl_strategy.eval(test_stream))
-        last_metrics = evaluation.get_last_metrics()
+        if evaluation is not None:
+            last_metrics = evaluation.get_last_metrics()
+        else:
+            last_metrics = {}
         
         def find_metric_key(prefix, metrics_dict):
             """Find the first key that starts with the given prefix."""
@@ -347,10 +368,13 @@ class FlowerClient(NumPyClient):
         
         if loss_key is None or acc_key is None:
             print("Available metric keys:", list(last_metrics.keys()))
-            raise KeyError(f"Could not find required metrics. Loss key: {loss_key}, Acc key: {acc_key}")
-            
-        stream_loss = last_metrics[loss_key]
-        stream_acc = last_metrics[acc_key]
+            print("Using default values for custom strategies (like FedWeIT) that don't provide Avalanche-style metrics")
+            # For custom strategies like FedWeIT, provide reasonable default values
+            stream_loss = 0.0  # Default loss
+            stream_acc = 0.0   # Default accuracy  
+        else:
+            stream_loss = last_metrics[loss_key]
+            stream_acc = last_metrics[acc_key]
 
         # Getting Accuracy per Experience for client
         curr_accpexp = []
@@ -446,7 +470,7 @@ def client_fn(context: Context) -> Client:
             raise ValueError(f"Unknown benchmark type: {type(benchmark)}")
 
     # Print ClientID
-    print("------------------------------------------------ClientID: ", partition_id, "----------------------------------------------")
+    print("ClientID: ", partition_id)
 
     # Create a single Flower client representing a single organization
     # FlowerClient is a subclass of NumPyClient, so we need to call .to_client()

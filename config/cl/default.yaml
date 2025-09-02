@@ -1,5 +1,5 @@
 # continual learning configuration
-strategy: naive  # naive, domain, ewc, replay, hybrid
+strategy: naive  # naive, domain, ewc, replay, hybrid, plora, fedcprompt, fedet, fedgem, fedma, fedproto, fedrcil, fedrep, fedweit, sacfl, stamp
 num_experiences: 5
 split: random
 
@@ -13,6 +13,68 @@ replay_mem_size: 200  # buffer size for storing old samples
 replay_selection: random  # random, herding, closest_to_mean
 
 # hybrid strategy uses both ewc and replay parameters above
+
+# PLoRA parameters
+plora:
+  rank: 4
+  alpha: 1.0
+
+# Fed-CPrompt parameters
+fedcprompt:
+  prompt_length: 8
+  prompt_dim: 768
+  num_classes: 10
+  c2loss_gamma: 1.0
+  c2loss_alpha: 0.1
+  c2loss_lambda: 1.0
+
+# FedET parameters
+fedet:
+  prompt_length: 10
+  prompt_dim: 128
+  num_classes: 10
+  head_dim: 128
+
+# FedGEM parameters
+gem:
+  memory_size: 200
+
+# FedMA parameters
+fedma:
+  # No required params for basic usage
+
+# FedProto parameters
+fedproto:
+  lambda_proto: 1.0
+
+# FedRCIL parameters
+fedrcil:
+  buffer_size: 200
+  proj_dim: 128
+  temperature: 0.5
+
+# FedRep parameters
+fedrep:
+  rep_layer_names: ["features.0.weight", "features.2.weight"]  # example, update as needed
+
+# FedWeIT parameters
+fedweit:
+  sparsity: 0.5
+  l1_lambda: 0.1
+  l2_lambda: 100.0
+
+# SacFL parameters
+sacfl:
+  shift_threshold: 1.0
+  memory_size: 128
+  contrastive_temperature: 0.5
+  contrastive_weight: 1.0
+
+# STAMP parameters
+stamp:
+  coreset_size: 100
+  feature_layer: null  # set to layer name if needed
+  device: cpu
 
 # TODOs:
 # online_learning: false  # true for online continual learning
