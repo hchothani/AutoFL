@@ -13,6 +13,23 @@ from avalanche.benchmarks.datasets import CORe50Dataset
 from config_utils import load_config
 cfg = load_config()
 
+class TupleDataset(torch.utils.data.Dataset):
+    """Wrapper to convert dict-based dataset to tuple-based dataset for Avalanche compatibility."""
+    def __init__(self, dataset):
+        self.dataset = dataset
+    
+    def __len__(self):
+        return len(self.dataset)
+    
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        if isinstance(sample, dict):
+            return sample["img"], sample["label"]
+        elif isinstance(sample, tuple) and len(sample) == 2:
+            return sample  
+        else:
+            return sample
+
 # configuration
 NUM_CLIENTS = getattr(cfg.server, 'num_clients', 5)
 BATCH_SIZE = getattr(cfg.dataset, 'batch_size', 32)

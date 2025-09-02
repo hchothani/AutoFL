@@ -203,16 +203,19 @@ def create_model(cfg):
         return create_simple_cnn(num_classes=model_classes, in_channels=input_channels, input_size=input_size)
     
     elif cfg.model.name == "wide_resnet":
-        from models.WideResNet import WideResNet28_10, WideResNet40_2, WideResNet16_8
-        # Choose configuration based on dataset
-        if 'cifar100' in cfg.dataset.workload or model_classes >= 50:
-            # Use larger model for CIFAR100 or datasets with many classes
-            print("Using Wide ResNet 28-10 for CIFAR100/complex datasets")
-            return WideResNet28_10(num_classes=model_classes)
-        else:
-            # Use smaller model for simpler datasets
-            print("Using Wide ResNet 40-2 for simpler datasets")
-            return WideResNet40_2(num_classes=model_classes)
+        from models.WideResNet import create_wide_resnet
+        
+        # Get WideResNet parameters from config, with defaults
+        depth = getattr(cfg.model, 'depth', 28)
+        widen_factor = getattr(cfg.model, 'widen_factor', 10)
+        dropout_rate = getattr(cfg.model, 'dropout_rate', 0.3)
+
+        return create_wide_resnet(
+            num_classes=model_classes,
+            depth=depth,
+            widen_factor=widen_factor,
+            dropout_rate=dropout_rate
+        )
     
     else:
         raise ValueError(f"unknown model: {cfg.model.name}")

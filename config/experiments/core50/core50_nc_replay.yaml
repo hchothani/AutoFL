@@ -6,23 +6,23 @@ dataset:
   num_classes: 50  
 
 model:
-  name: wide_resnet 
+  name: simple_cnn  # Use simpler model to reduce GPU memory usage
   pretrained: false
-  num_classes: 5  # Classes per task (first task has 10, others have 5)
+  num_classes: 50  # CORe50 has 50 total classes
 
 cl:
   strategy: replay
   scenario: nc  # New Classes scenario
   num_experiences: 9  # 9 experiences in NC scenario
-  replay_mem_size: 1000  # buffer size for old samples
+  replay_mem_size: 200  # Reduce buffer size to save memory
   replay_selection: random
 
 training:
   learning_rate: 0.001
-  epochs: 10
+  epochs: 5  # Reduce epochs for quicker testing
 
 server:
-  num_rounds: 18
+  num_rounds: 9  # Match number of experiences
   num_clients: 5
   strategy: fedavg
   fraction_fit: 1.0
@@ -30,9 +30,9 @@ server:
   min_eval: 5
 
 client:
-  num_cpus: 4
-  num_gpus: 0.5
-  epochs: 10
+  num_cpus: 8
+  num_gpus: 0.2  # Reduce GPU allocation
+  epochs: 5
 
 wb:
   project: autofl-testing

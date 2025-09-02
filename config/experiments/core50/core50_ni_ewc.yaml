@@ -6,7 +6,7 @@ dataset:
   num_classes: 50  
 
 model:
-  name: wide_resnet 
+  name: resnet 
   pretrained: false
   num_classes: 50
 
@@ -31,10 +31,10 @@ server:
   min_eval: 5
 
 client:
-  num_cpus: 4
+  num_cpus: 8
   num_gpus: 0.2
   epochs: 10
 
 wb:
   project: autofl-testing
-  name: f_core50_ni_ewc_wide_resnet_fedavg 
+  name: f_core50_ni_ewc_resnet_fedavg_gpu 
