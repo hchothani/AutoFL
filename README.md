@@ -10,6 +10,12 @@ python mclmain.py --config-path config/experiments --config-name cifar10_naive
 
 additional information can be found [here](documentation/)
 
+## Latency-aware simulation and analysis
+
+- Enable OMNeT++-derived latency traces via the `latency` section in your config. See [`documentation/latency_simulation.md`](documentation/latency_simulation.md) for the full walkthrough.
+- Each run emits CSV logs with per-client timing, aggregated metrics, and server aggregation latency under `outputs/<timestamp>_*`.
+- Compare baseline vs. latency-injected runs with `python omnet-data/plot_latency_comparison.py --baseline <run_dir> --latency <run_dir>` to generate accuracy and runtime plots alongside a summary table.
+
 
 ## TODOs
 

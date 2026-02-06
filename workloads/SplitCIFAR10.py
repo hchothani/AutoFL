@@ -10,12 +10,15 @@ from avalanche.benchmarks.utils import AvalancheDataset
 from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
 
 from config_utils import load_config
+from workloads.partitioning import build_partitioner
 cfg = load_config()
 
 # configuration
 NUM_CLIENTS = getattr(cfg.server, 'num_clients', 5)
 BATCH_SIZE = getattr(cfg.dataset, 'batch_size', 32)
 NUM_TASKS = getattr(cfg.cl, 'num_experiences', 5)
+
+fds = None
 
 class SplitCIFAR10Dataset(Dataset):
     """dataset that filters cifar10 by specific classes"""
@@ -72,7 +75,14 @@ def load_datasets(partition_id: int):
     """load split cifar10 datasets for continual learning"""
     
     # load federated cifar10 dataset
-    fds = FederatedDataset(dataset="cifar10", partitioners={"train": NUM_CLIENTS})
+    global fds
+    if fds is None:
+        partitioner = build_partitioner(
+            cfg,
+            num_partitions=NUM_CLIENTS,
+            default_partition_by="label",
+        )
+        fds = FederatedDataset(dataset="cifar10", partitioners={"train": partitioner})
     partition = fds.load_partition(partition_id)
     
     # split into train/test

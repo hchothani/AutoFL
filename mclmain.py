@@ -1,12 +1,19 @@
+import atexit
+from datetime import datetime
+from pathlib import Path
+import sys
+import os
+import warnings
+
 import torch
 import flwr
 from flwr.simulation import run_simulation
 from flwr.client import ClientApp
 from flwr.server import ServerApp
 
-import sys, os
 from omegaconf import OmegaConf
-import warnings
+
+from utils.latency_simulator import init_runtime_recorder, flush_runtime_recorder
 
 # Ignore Deprecation Warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -48,6 +55,51 @@ print("Configuration Loaded:\n" + OmegaConf.to_yaml(cfg))
 from utils.model_factory import validate_config
 validate_config(cfg)
 
+
+def _sanitize_segment(text: str) -> str:
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789-_"
+    text = text.lower().replace(" ", "-")
+    return "".join(ch if ch in allowed else "-" for ch in text).strip("-")
+
+
+def prepare_run_directory(cfg):
+    if "logging" not in cfg or cfg.logging is None:
+        cfg.logging = OmegaConf.create({})
+    if "output_root" not in cfg.logging or cfg.logging.output_root is None:
+        cfg.logging.output_root = "outputs"
+    output_root = Path(cfg.logging.output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    run_name = None
+    if "wb" in cfg and cfg.wb is not None:
+        run_name = cfg.wb.get("name")
+    if not run_name:
+        dataset_name = cfg.dataset.workload if "dataset" in cfg else "dataset"
+        model_name = cfg.model.name if "model" in cfg else "model"
+        run_name = f"{dataset_name}_{model_name}"
+
+    run_name = _sanitize_segment(run_name) or "autofl"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    latency_cfg = cfg.latency if "latency" in cfg and cfg.latency is not None else OmegaConf.create({})
+    latency_enabled = bool(latency_cfg.get("enabled", False))
+    latency_suffix = "latency_on" if latency_enabled else "latency_off"
+
+    append_name = cfg.logging.get("append_run_name_to_dir", True)
+    folder_segments = [timestamp]
+    if append_name:
+        folder_segments.append(run_name)
+    folder_segments.append(latency_suffix)
+    run_folder = "_".join(seg for seg in folder_segments if seg)
+    run_dir = output_root / run_folder
+    run_dir.mkdir(parents=True, exist_ok=True)
+    cfg.logging.run_output_dir = str(run_dir)
+    return run_dir
+
+
+run_dir = prepare_run_directory(cfg)
+init_runtime_recorder(cfg)
+atexit.register(flush_runtime_recorder)
+
 # Save to temp config for other modules
 with open("temp_config.yaml", "w") as f:
     OmegaConf.save(cfg, f)
@@ -81,6 +133,8 @@ def main():
         num_supernodes = cfg.server.num_clients,
         backend_config = backend_config,
     )
+
+    flush_runtime_recorder()
     
     # Clean up temp config
     if os.path.exists("temp_config.yaml"):

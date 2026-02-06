@@ -16,6 +16,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from config_utils import load_config
 cfg = load_config()
+from utils.latency_simulator import get_runtime_recorder
 
 # Only initialize wandb if mode is not disabled
 if cfg.wb.get('mode', 'online') != 'disabled':
@@ -40,9 +41,29 @@ NUM_ROUNDS = cfg.server.num_rounds
 LOCAL_EPOCHS = cfg.client.epochs
 NUM_CLIENTS = cfg.server.num_clients
 
+
+def _collect_metric_list(metrics: List[Tuple[int, Metrics]], key: str):
+    values = []
+    for _, metric in metrics:
+        if key not in metric:
+            return None
+        values.append(metric[key])
+    return values
+
+
+def _load_accuracy_vectors(raw_values):
+    vectors = []
+    for value in raw_values:
+        if isinstance(value, str):
+            try:
+                vectors.append(json.loads(value))
+            except json.JSONDecodeError:
+                return None
+        else:
+            vectors.append(value)
+    return vectors
+
 # State of all rounds metrics
-wexpacc_byround = []
-gcf_per_exp_running =[0 for _ in range (NUM_ROUNDS)]
 
 def fit_config(server_round: int):
     """Return training configuration dict for each round."""
@@ -69,150 +90,183 @@ def evaluate_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metri
     pid = [m["pid"] for _, m in metrics]
     rnd = metrics[0][1]["server_round"]
 
-    exp_accuracy_ds = [json.loads(m["accuracy_per_experience"]) for _, m in metrics]
-    client_accuracy = [m["stream_accuracy"] for _, m in metrics]  # use stream_accuracy
-    client_loss = [m["stream_loss"] for _, m in metrics]  # use stream_loss
     examples = [num_examples for num_examples, _ in metrics]
-    
-    try:
-        wexpacc = [sum(w * val for w, val in zip(examples, values))/sum(examples) for values in zip(*exp_accuracy_ds)]
-        wexpacc_byround.append(wexpacc)
-        latest_wexpacc = wexpacc_byround[-1]
+    total_examples = sum(examples)
 
-        # Safe array indexing to prevent index errors
-        for i, w in enumerate(wexpacc_byround):
-            if i < len(wexpacc_byround[i]) and i < len(latest_wexpacc):
-                gcf_per_exp_running[i] = wexpacc_byround[i][i] - latest_wexpacc[i]
+    cum_forgetting = _collect_metric_list(metrics, "cumalative_forgetting_measure")
+    step_forgetting = _collect_metric_list(metrics, "stepwise_forgetting_measure")
+    accuracy_per_exp_raw = _collect_metric_list(metrics, "accuracy_per_experience")
+    accuracy_per_exp_vectors = (
+        _load_accuracy_vectors(accuracy_per_exp_raw)
+        if accuracy_per_exp_raw is not None
+        else None
+    )
 
-        gcf = sum(gcf_per_exp_running)/NUM_ROUNDS if NUM_ROUNDS > 0 else 0
-    except Exception as e:
-        print(f"Error in forgetting calculation: {e}")
-        gcf = 0
-        wexpacc = [0] * len(exp_accuracy_ds[0]) if exp_accuracy_ds else [0]
-
-    # Log all metrics in a single wandb.log call for better organization
-    try:
-        wandb_metrics = {
-            # Global metrics
-            "global/accuracy": sum(w_accuracies) / sum(examples) if sum(examples) > 0 else 0,
-            "global/loss": sum(w_losses) / sum(examples) if sum(examples) > 0 else 0,
-            "global/forgetting_measure": gcf,
-            "round": rnd,
-        }
-
-        # Per-experience metrics
-        for i, expacc in enumerate(wexpacc, start=1):
-            if isinstance(expacc, (int, float)) and not np.isnan(expacc):
-                wandb_metrics[f"global/experience_{i}/accuracy"] = float(expacc)
-
-        # Per-client metrics
-        for i, (acc, cid) in enumerate(zip(client_accuracy, pid), start=1):
-            if isinstance(acc, (int, float)) and not np.isnan(acc):
-                wandb_metrics[f"client/{cid}/accuracy"] = float(acc)
-            if i-1 < len(client_loss) and isinstance(client_loss[i-1], (int, float)) and not np.isnan(client_loss[i-1]):
-                wandb_metrics[f"client/{cid}/loss"] = float(client_loss[i-1])
-
-        # Per-experience forgetting metrics
-        for i, g in enumerate(gcf_per_exp_running):
-            if isinstance(g, (int, float)) and not np.isnan(g):
-                wandb_metrics[f"global/experience_{i}/forgetting"] = float(g)
-
-        # Log all metrics at once
-        wandb.log(wandb_metrics, step=rnd)
-        print(f"Evaluation metrics logged successfully for round {rnd}")
-    except Exception as e:
-        print(f"Error logging evaluation metrics: {e}")
-        # Continue without logging rather than crashing
-
-    return {
-        "global_accuracy": sum(w_accuracies) / sum(examples),
-        "global_loss": sum(w_losses) / sum(examples),
-        "global_wexp_accuracy": ",".join(map(str, wexpacc)),
-        "global_client_accuracy": ",".join(map(str, client_accuracy)),
-        "global_client_loss": ",".join(map(str, client_loss)),
-        "global_exp_accuracy": json.dumps(exp_accuracy_ds),
-        "gcf": float(gcf),
-        "gcf_per_exp": json.dumps(gcf_per_exp_running),
+    eval_metrics = {
+        "global/average/accuracy": sum(w_accuracies) / total_examples,
+        "global/client/accuracy": {id: acc for id, acc in zip(pid, client_accuracies)},
+        "global/average/loss": sum(w_losses) / total_examples,
+        "global/client/loss": {id: loss for id, loss in zip(pid, client_losses)},
     }
 
-def fit_metrics_aggregation_fn(metrics: list) -> dict:
-    # metrics: List[Tuple[num_examples, client_metrics_dict]]
-    accuracies = [num_examples * m["stream_acc"] for num_examples, m in metrics]
-    losses = [num_examples * m["stream_loss"] for num_examples, m in metrics]
-    # forgetting = [m["cumalative_forgetting_measure"] for _, m in metrics]
-    forgetting = [m.get("cumalative_forgetting_measure", 0) for _, m in metrics]
-    stepwise_forgetting = [m["stepwise_forgetting_measure"] for _, m in metrics]
-    exp_accs = [json.loads(m["accuracy_per_experience"]) for _, m in metrics]
-    
-    # Extract client IDs and round info for individual logging
-    client_ids = [m["pid"] for _, m in metrics]
-    rnd = metrics[0][1]["round"] if metrics else 1
-    # Optionally, confusion matrices
-    confusion_matrices = [json.loads(m["confusion_matrix"]) for _, m in metrics if "confusion_matrix" in m]
-
-    avg_acc = sum(accuracies) / sum(num_examples for num_examples, _ in metrics)
-    avg_loss = sum(losses) / sum(num_examples for num_examples, _ in metrics)
-    avg_forgetting = np.mean(forgetting)
-    avg_stepwise_forgetting = np.mean(stepwise_forgetting)
-    avg_exp_acc = np.mean(exp_accs, axis=0).tolist()  # Per-experience average
-
-    # BWT and FWT (example, you may need to adjust based on your history storage)
-    bwt = avg_exp_acc[-1] - np.mean(avg_exp_acc[:-1]) if len(avg_exp_acc) > 1 else 0
-    fwt = avg_exp_acc[0] - np.mean(avg_exp_acc[1:]) if len(avg_exp_acc) > 1 else 0
-
-    # Aggregate confusion matrix if available
-    if confusion_matrices:
-        agg_conf_matrix = np.sum(confusion_matrices, axis=0)
-        wandb_conf_matrix = wandb.plot.confusion_matrix(
-            probs=None,
-            y_true=None,
-            preds=None,
-            confusion_matrix=agg_conf_matrix.tolist(),
-            class_names=[str(i) for i in range(len(agg_conf_matrix))]
+    if cum_forgetting is not None:
+        avg_cum = sum(cum_forgetting) / len(cum_forgetting)
+        eval_metrics.update(
+            {
+                "global/average/cumalative_forgetting": avg_cum,
+                "global/client/cumalative_forgetting": {
+                    id: cmfm for id, cmfm in zip(pid, cum_forgetting)
+                },
+            }
         )
     else:
-        wandb_conf_matrix = None
+        log(WARNING, "Missing 'cumalative_forgetting_measure' in evaluation metrics; skipping aggregate logging for this field.")
 
-    # Log to wandb - fix the list logging issue
-    log_dict = {
-        "global/accuracy": avg_acc,
-        "global/loss": avg_loss,
-        "global/forgetting": avg_forgetting,
-        "global/stepwise_forgetting": avg_stepwise_forgetting,
-        "global/BWT": bwt,
-        "global/FWT": fwt,
-        "round": rnd,
+    if step_forgetting is not None:
+        avg_step = sum(step_forgetting) / len(step_forgetting)
+        eval_metrics.update(
+            {
+                "global/average/stepwise_forgetting": avg_step,
+                "global/client/stepwise_forgetting": {
+                    id: swfm for id, swfm in zip(pid, step_forgetting)
+                },
+            }
+        )
+    else:
+        log(WARNING, "Missing 'stepwise_forgetting_measure' in evaluation metrics; skipping aggregate logging for this field.")
+
+    if accuracy_per_exp_vectors is not None:
+        weighted_accuracy_pexp = [
+            sum(w * val for w, val in zip(examples, values)) / total_examples
+            for values in zip(*accuracy_per_exp_vectors)
+        ]
+        eval_metrics["global/experience/accuracy"] = {
+            id: acc for id, acc in zip(pid, weighted_accuracy_pexp)
+        }
+    else:
+        log(WARNING, "Missing 'accuracy_per_experience' in evaluation metrics; skipping per-experience aggregates.")
+
+    wandb.log(eval_metrics, step=rnd)
+
+    recorder = get_runtime_recorder()
+    if recorder is not None:
+        entries = [(num_examples, dict(m)) for num_examples, m in metrics]
+        recorder.log_client_round(rnd, entries)
+        aggregate_row = {
+            "global/average/accuracy": eval_metrics["global/average/accuracy"],
+            "global/average/loss": eval_metrics["global/average/loss"],
+        }
+        if "global/average/cumalative_forgetting" in eval_metrics:
+            aggregate_row["global/average_cumalative_forgetting"] = eval_metrics[
+                "global/average/cumalative_forgetting"
+            ]
+        if "global/average/stepwise_forgetting" in eval_metrics:
+            aggregate_row["global/average_stepwise_forgetting"] = eval_metrics[
+                "global/average/stepwise_forgetting"
+            ]
+        recorder.log_aggregate_metrics(rnd, "eval", aggregate_row)
+
+    result_metrics = {
+        "global/average_accuracy": eval_metrics["global/average/accuracy"],
+        "global/average_loss": eval_metrics["global/average/loss"],
     }
-    
-    # Log per-experience accuracy as individual metrics instead of a list
-    for i, exp_acc in enumerate(avg_exp_acc):
-        log_dict[f"global/experience_{i+1}_accuracy"] = exp_acc
-    
-    # Add individual client metrics
-    for i, (client_id, _, m) in enumerate(zip(client_ids, range(len(metrics)), [m for _, m in metrics])):
-        log_dict[f"client/{client_id}/accuracy"] = m["stream_acc"]
-        log_dict[f"client/{client_id}/loss"] = m["stream_loss"]
-        log_dict[f"client/{client_id}/stepwise_forgetting"] = m["stepwise_forgetting_measure"]
-    
-    try:
-        print("Logging to wandb:", log_dict)  # Debug print
-        wandb.log(log_dict, step=rnd)
-        print(f"Fit metrics logged successfully for round {rnd}")
-    except Exception as e:
-        print(f"Error logging fit metrics: {e}")
-        # Continue without logging rather than crashing
+    if cum_forgetting is not None:
+        result_metrics["global/average_cumalative_forgetting"] = sum(cum_forgetting) / len(cum_forgetting)
+    if step_forgetting is not None:
+        result_metrics["global/average_stepwise_forgetting"] = sum(step_forgetting) / len(step_forgetting)
 
-    
+    return result_metrics
+
+def fit_metrics_aggregation_fn(metrics: List[Tuple[int, Metrics]]) -> Metrics:
+    """Calculate Metrics After Fit of Clients"""
+
+    # Per Client Acc and Loss
+    client_acc = [m["stream_acc"] for _, m in metrics]
+    client_loss = [m["stream_loss"] for _, m in metrics]
+    # Weighted Acc and Loss
+    w_accuracies = [num_examples * m["stream_acc"] for num_examples, m in metrics]
+    w_losses = [num_examples * m["stream_loss"] for num_examples, m in metrics]
+    # Forgetting Measures
+    cumalative_forgetting_measures = [m["cumalative_forgetting_measure"] for _, m in metrics]
+    stepwise_forgetting_measures = [m["stepwise_forgetting_measure"] for _, m in metrics]
+    network_times = [m.get("latency/expected_network_time_s", 0.0) for _, m in metrics]
+    training_times = [m.get("timing/training_s", 0.0) for _, m in metrics]
+    round_times = [m.get("timing/round_total_s", 0.0) for _, m in metrics]
+    round_wall_clock_times = [m.get("timing/round_wall_clock_s", m.get("timing/round_total_s", 0.0)) for _, m in metrics]
+    simulated_latency_components = [m.get("timing/simulated_latency_s", 0.0) for _, m in metrics]
+    download_times = [m.get("latency/download_time_s", 0.0) for _, m in metrics]
+    upload_times = [m.get("latency/upload_time_s", 0.0) for _, m in metrics]
+    has_round_baseline = any("timing/round_without_latency_s" in m for _, m in metrics)
+    round_times_without_latency = [m.get("timing/round_without_latency_s", 0.0) for _, m in metrics] if has_round_baseline else []
+    latency_components = [m.get("timing/round_latency_component_s", 0.0) for _, m in metrics] if has_round_baseline else []
+
+    # Round and Partition Id's
+    rnd = metrics[0][1]["round"]
+    pid = [m["pid"] for _, m in metrics]
+
+    accuracy_per_exp_pc = [json.loads(m["accuracy_per_experience"]) for _, m in metrics]
+    examples = [num_examples for num_examples, _ in metrics]
+
+    weighted_accuracy_per_exp = [sum(w * val for w, val in zip(examples, values))/sum(examples) for values in zip(*accuracy_per_exp_pc)]
+
+    fit_metrics = {
+        "local/average/accuracy": sum(w_accuracies) / sum(examples),
+        "local/client/accuracy": {id: acc for id, acc in zip(pid,client_acc)},
+        "local/average/loss": sum(w_losses) / sum(examples),
+        "local/client/loss": {id: loss for id, loss in zip(pid, client_loss)},
+        "local/average/cumalative_forgetting": sum(cumalative_forgetting_measures) / len(cumalative_forgetting_measures),
+        "local/client/cumalative_forgetting": {id: cmfm for id, cmfm in zip(pid, cumalative_forgetting_measures)},
+        "local/average/stepwise_forgetting": sum(stepwise_forgetting_measures) / len(stepwise_forgetting_measures),
+        "local/client/stepwise_forgetting": {id: swfm for id, swfm in zip(pid, stepwise_forgetting_measures)},
+        "local/experience/accuracy": {id: acc for id, acc in zip(pid, weighted_accuracy_per_exp)},
+        "local/average/network_time_s": float(sum(network_times) / len(network_times)) if network_times else 0.0,
+        "local/average/training_time_s": float(sum(training_times) / len(training_times)) if training_times else 0.0,
+        "local/average/round_time_s": float(sum(round_times) / len(round_times)) if round_times else 0.0,
+        "local/average/round_wall_clock_s": float(sum(round_wall_clock_times) / len(round_wall_clock_times)) if round_wall_clock_times else 0.0,
+        "local/average/simulated_latency_s": float(sum(simulated_latency_components) / len(simulated_latency_components)) if simulated_latency_components else 0.0,
+        "local/average/download_time_s": float(sum(download_times) / len(download_times)) if download_times else 0.0,
+        "local/average/upload_time_s": float(sum(upload_times) / len(upload_times)) if upload_times else 0.0,
+        }
+
+    if round_times_without_latency:
+        avg_round_without_latency = float(sum(round_times_without_latency) / len(round_times_without_latency))
+        avg_latency_component = float(sum(latency_components) / len(latency_components)) if latency_components else 0.0
+        fit_metrics["local/average/round_time_without_latency_s"] = avg_round_without_latency
+        fit_metrics["local/average/latency_component_s"] = avg_latency_component
+        fit_metrics["local/average/round_time_variance_s"] = fit_metrics["local/average/round_time_s"] - avg_round_without_latency
+
+    # Logging to Wandb
+    wandb.log(fit_metrics, step=rnd)
+
+    recorder = get_runtime_recorder()
+    if recorder is not None:
+        entries = [(num_examples, dict(m)) for num_examples, m in metrics]
+        recorder.log_client_round(rnd, entries)
+        aggregate_row = {
+            "local/average/accuracy": fit_metrics["local/average/accuracy"],
+            "local/average/loss": fit_metrics["local/average/loss"],
+            "local/average/cumalative_forgetting": fit_metrics["local/average/cumalative_forgetting"],
+            "local/average/stepwise_forgetting": fit_metrics["local/average/stepwise_forgetting"],
+            "local/average/network_time_s": fit_metrics.get("local/average/network_time_s", 0.0),
+            "local/average/training_time_s": fit_metrics.get("local/average/training_time_s", 0.0),
+            "local/average/round_time_s": fit_metrics.get("local/average/round_time_s", 0.0),
+            "local/average/round_wall_clock_s": fit_metrics.get("local/average/round_wall_clock_s", 0.0),
+            "local/average/simulated_latency_s": fit_metrics.get("local/average/simulated_latency_s", 0.0),
+            "local/average/download_time_s": fit_metrics.get("local/average/download_time_s", 0.0),
+            "local/average/upload_time_s": fit_metrics.get("local/average/upload_time_s", 0.0),
+        }
+        if round_times_without_latency:
+            aggregate_row["local/average/round_time_without_latency_s"] = fit_metrics.get("local/average/round_time_without_latency_s", 0.0)
+            aggregate_row["local/average/round_time_variance_s"] = fit_metrics.get("local/average/round_time_variance_s", 0.0)
+        recorder.log_aggregate_metrics(rnd, "fit", aggregate_row)
+
     return {
-        "global_accuracy": avg_acc,
-        "global_loss": avg_loss,
-        "global_forgetting": avg_forgetting,
-        "global_stepwise_forgetting": avg_stepwise_forgetting,
-        "global_BWT": bwt,
-        "global_FWT": fwt,
-        "global_experience_accuracy": json.dumps(avg_exp_acc),
-    }
-
-
-
-    
+            "local/average_accuracy": sum(w_accuracies) / sum(examples),
+            "local/average_loss": sum(w_losses) / sum(examples),
+            "local/average_cumalative_forgetting": sum(cumalative_forgetting_measures)/ len(cumalative_forgetting_measures),
+        "local/average_stepwise_forgetting": sum(stepwise_forgetting_measures) /  len(stepwise_forgetting_measures),
+        "local/average_network_time": float(sum(network_times) / len(network_times)) if network_times else 0.0,
+        "local/average_round_time": float(sum(round_times) / len(round_times)) if round_times else 0.0,
+        "local/average_round_time_without_latency": float(sum(round_times_without_latency) / len(round_times_without_latency)) if round_times_without_latency else 0.0,
+        "local/average_round_time_variance": fit_metrics.get("local/average/round_time_variance_s", 0.0),
+            }   

@@ -18,12 +18,12 @@ training:
 
 server:
   num_rounds: 10
-  num_clients: 5  # Balanced for GPU memory
+  num_clients: 10  # Balanced for GPU memory
   fraction_fit: 1.0
-  min_fit: 5  # Match num_clients
-  min_eval: 5  # Match num_clients
+  min_fit: 10  # Match num_clients
+  min_eval: 10  # Match num_clients
 
-  strategy: fedavg
+  strategy: latency_aware_fedavg
 
 client:
   num_cpus: 4
@@ -32,4 +32,4 @@ client:
 
 wb:
   project: autofl-testing  
-  name: f_cifar10_naive_fedavg_gpu 
+  name: f_cifar10_naive_fedavg_gpu_latency

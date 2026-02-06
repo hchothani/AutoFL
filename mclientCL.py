@@ -1,33 +1,24 @@
-# Import From Custom Modules
-from clutils.ParamFns import set_parameters, get_parameters
-from clutils.make_experiences import split_dataset
-from clutils.clstrat import make_cl_strat 
+from __future__ import annotations
 
-#Import basic Modules
-import json
-import random
-import os
 import warnings
-from omegaconf import OmegaConf
-# Avalanche Imports
-from avalanche.benchmarks.utils import as_classification_dataset, AvalancheDataset
-from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
-from avalanche.benchmarks.utils.data import make_avalanche_dataset
-from avalanche.benchmarks.utils.utils import as_avalanche_dataset
+from typing import List
 
-# Flower Imports
-import flwr
 import torch
 import gc  # For garbage collection
 from flwr.client import Client, ClientApp, NumPyClient
 from flwr.common import Metrics, Context, ConfigsRecord
 
-# Ignore Flower Warnings
+from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
+
+from clutils.make_experiences import split_dataset
+from clients import FlowerClient, initialize_partition_strategies
+from config_utils import load_config
+from utils.latency_simulator import LatencySimulator
+
 warnings.filterwarnings("ignore")
 
-#Setting up Configuration
-from config_utils import load_config
 cfg = load_config()
+latency_simulator = LatencySimulator(cfg)
 
 
 # Import workload based on configuration
@@ -63,48 +54,23 @@ elif cfg.dataset.workload == "core50":
 else:
     raise ValueError(f"Unknown workload: {cfg.dataset.workload}")
 
-# Setting Global Variables
-# Respect configuration: only use GPU if num_gpus > 0.0 AND CUDA is available
+# Device placement
 if cfg.client.num_gpus > 0.0 and torch.cuda.is_available():
     DEVICE = torch.device("cuda:0")
     print(f"Using GPU: {DEVICE}")
 else:
     DEVICE = torch.device("cpu")
     print(f"Using CPU: {DEVICE}")
-    
-BATCH_SIZE = cfg.dataset.batch_size
+
 NUM_CLIENTS = cfg.server.num_clients
 NUM_EXP = cfg.cl.num_experiences
 
-# Color print function
-def clear_memory():
-    """Clear CUDA memory and run garbage collection"""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-    gc.collect()
-
-def cprint(text, color="green"):
-    """Print text with color. Available colors: red, green, yellow, blue, magenta, cyan, white"""
-    colors = {
-        'red': '\033[91m',
-        'green': '\033[92m',
-        'yellow': '\033[93m',
-        'blue': '\033[94m',
-        'magenta': '\033[95m',
-        'cyan': '\033[96m',
-        'white': '\033[97m',
-        'reset': '\033[0m'
-    }
-    color_code = colors.get(color.lower(), colors['green'])
-    print(f"{color_code}{text}{colors['reset']}")
 
 def get_model():
-    """Get model based on configuration"""
-    # use intelligent model factory
     from utils.model_factory import create_model
-    return create_model(cfg)
 
+    return create_model(cfg)
+  
 # Persistent State of Clients
 partition_strategies = [make_cl_strat(get_model().to(DEVICE)) for _ in range(NUM_CLIENTS)]
 
@@ -400,81 +366,72 @@ class FlowerClient(NumPyClient):
                 "pid": self.partition_id,
                 }
 
-        # Printing Global Evaluation Results:
-        print(f"Global Distributed Evaluation of Client {self.partition_id}")
-        print(json.dumps(eval_dict_return, indent=4))
 
-        cprint("Logging Client States")
-        # Note: global evaluation metrics logging disabled for now
+partition_strategies = initialize_partition_strategies(
+    lambda: get_model().to(DEVICE),
+    NUM_CLIENTS,
+)
 
-        # MEMORY CLEANUP - clear CUDA cache and run garbage collection  
-        clear_memory()
-        print(f"Memory cleared after evaluation round {rnd}")
 
-        return float(stream_loss), sum(self.testlen_per_exp), eval_dict_return
+def _stream_lengths(stream) -> List[int]:
+    return [len(exp.dataset) for exp in stream]
 
 # Function that launches a Client
 def client_fn(context: Context) -> Client:
     """Create a Flower client representing a single organization."""
 
-    # Load model
     net = get_model().to(DEVICE)
-
-    # Grab Partition Data
     partition_id = context.node_config["partition-id"]
 
-    # load_datasets may return a tuple (train_data, test_data) or a benchmark object
     dataset_result = load_datasets(partition_id=partition_id)
 
     if isinstance(dataset_result, tuple):
-        # Regular CL: (train_data, test_data)
         train_data, test_data = dataset_result
-        n_experiences = cfg.cl.num_experiences
-        train_experiences = split_dataset(train_data, n_experiences)
-        test_experiences = split_dataset(test_data, n_experiences)
+        train_experiences = split_dataset(train_data, NUM_EXP)
+        test_experiences = split_dataset(test_data, NUM_EXP)
         trainlen_per_exp = [len(exp) for exp in train_experiences]
         testlen_per_exp = [len(exp) for exp in test_experiences]
-        from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
         benchmark = benchmark_from_datasets(train=train_experiences, test=test_experiences)
     elif isinstance(dataset_result, dict):
-        # CORe50 or other workloads that return a dictionary with benchmark and metadata
         benchmark = dataset_result["benchmark"]
-        n_experiences = cfg.cl.num_experiences
-        
-        # Handle CLScenario objects
-        if hasattr(benchmark, 'train_stream'):
-            # Standard benchmark
-            trainlen_per_exp = [len(exp.dataset) for exp in benchmark.train_stream]
-            testlen_per_exp = [len(exp.dataset) for exp in benchmark.test_stream]
-        elif hasattr(benchmark, 'train_datasets_stream'):
-            # CLScenario object
-            trainlen_per_exp = [len(exp.dataset) for exp in benchmark.train_datasets_stream]
-            testlen_per_exp = [len(exp.dataset) for exp in benchmark.test_datasets_stream]
+        if hasattr(benchmark, "train_stream"):
+            trainlen_per_exp = _stream_lengths(benchmark.train_stream)
+            testlen_per_exp = _stream_lengths(benchmark.test_stream)
+        elif hasattr(benchmark, "train_datasets_stream"):
+            trainlen_per_exp = _stream_lengths(benchmark.train_datasets_stream)
+            testlen_per_exp = _stream_lengths(benchmark.test_datasets_stream)
         else:
             raise ValueError(f"Unknown benchmark type: {type(benchmark)}")
     else:
-        # DomainCL: benchmark object
         benchmark = dataset_result
-        n_experiences = cfg.cl.num_experiences
-        
-        # Handle CLScenario objects
-        if hasattr(benchmark, 'train_stream'):
-            # Standard benchmark
-            trainlen_per_exp = [len(exp.dataset) for exp in benchmark.train_stream]
-            testlen_per_exp = [len(exp.dataset) for exp in benchmark.test_stream]
-        elif hasattr(benchmark, 'train_datasets_stream'):
-            # CLScenario object
-            trainlen_per_exp = [len(exp.dataset) for exp in benchmark.train_datasets_stream]
-            testlen_per_exp = [len(exp.dataset) for exp in benchmark.test_datasets_stream]
+        if hasattr(benchmark, "train_stream"):
+            trainlen_per_exp = _stream_lengths(benchmark.train_stream)
+            testlen_per_exp = _stream_lengths(benchmark.test_stream)
+        elif hasattr(benchmark, "train_datasets_stream"):
+            trainlen_per_exp = _stream_lengths(benchmark.train_datasets_stream)
+            testlen_per_exp = _stream_lengths(benchmark.test_datasets_stream)
         else:
             raise ValueError(f"Unknown benchmark type: {type(benchmark)}")
 
-    # Print ClientID
-    print("ClientID: ", partition_id)
+    print(
+        "------------------------------------------------ClientID: ",
+        partition_id,
+        "----------------------------------------------",
+    )
 
-    # Create a single Flower client representing a single organization
-    # FlowerClient is a subclass of NumPyClient, so we need to call .to_client()
-    # to convert it to a subclass of `flwr.client.Client`
-    return FlowerClient(context, net, benchmark, trainlen_per_exp, testlen_per_exp, partition_id).to_client()
+    strategy_bundle = partition_strategies[partition_id]
+
+    return FlowerClient(
+        context=context,
+        net=net,
+        benchmark=benchmark,
+        trainlen_per_exp=trainlen_per_exp,
+        testlen_per_exp=testlen_per_exp,
+        partition_id=partition_id,
+        strategy_bundle=strategy_bundle,
+        latency_simulator=latency_simulator,
+        cfg=cfg,
+        experience_count=NUM_EXP,
+    ).to_client()
 
 

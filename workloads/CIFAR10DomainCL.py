@@ -14,11 +14,13 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from config_utils import load_config
+from workloads.partitioning import build_partitioner
 cfg = load_config()
 
 NUM_CLIENTS = cfg.server.num_clients
 BATCH_SIZE = cfg.dataset.batch_size
 
+fds = None
 # TODO: Convert hugging face to torch and then from torch to avalanche
 
 
@@ -58,7 +60,14 @@ DOMAIN_TRANSFORMS = {
 }
 
 def load_datasets(partition_id: int):
-    fds = FederatedDataset(dataset="cifar10", partitioners={"train": NUM_CLIENTS})
+    global fds
+    if fds is None:
+        partitioner = build_partitioner(
+            cfg,
+            num_partitions=NUM_CLIENTS,
+            default_partition_by="label",
+        )
+        fds = FederatedDataset(dataset="cifar10", partitioners={"train": partitioner})
     partition = fds.load_partition(partition_id)
     
     # Divide data on each node: 80% train, 20% test

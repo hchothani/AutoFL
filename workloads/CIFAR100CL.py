@@ -7,7 +7,6 @@ from avalanche.benchmarks.utils.data import make_avalanche_dataset
 
 import flwr
 from flwr_datasets import FederatedDataset
-from flwr_datasets.partitioner import DirichletPartitioner, IidPartitioner
 
 from omegaconf import OmegaConf
 from pathlib import Path
@@ -16,6 +15,7 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from config_utils import load_config
+from workloads.partitioning import build_partitioner
 cfg = load_config()
 
 BATCH_SIZE = cfg.dataset.batch_size
@@ -42,17 +42,13 @@ def load_datasets(partition_id: int):
     # Only Initialize FederatedDatasaet Once
     global fds
     if fds is None:
-        if cfg.dataset.split == "niid":
-            partitioner = DirichletPartitioner(
-                    num_partitions=NUM_CLIENTS,
-                    partition_by="label",
-                    alpha=cfg.dataset.niid.alpha,
-                    seed=cfg.dataset.niid.seed,
-                )
-        elif cfg.dataset.split == "iid":
-            partitioner = IidPartitioner(num_partitions=NUM_CLIENTS)
-
-        fds = FederatedDataset(dataset="cifar100", partitioners={"train": NUM_CLIENTS})
+        partitioner = build_partitioner(
+            cfg,
+            num_partitions=NUM_CLIENTS,
+            default_partition_by="fine_label",
+        )
+        fds = FederatedDataset(dataset="cifar100", partitioners={"train": partitioner})
+        
     partition = fds.load_partition(partition_id)
     # Divide data on each node: 80% train, 20% test
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)

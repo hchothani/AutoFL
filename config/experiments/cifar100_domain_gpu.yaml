@@ -1,36 +1,49 @@
 # CIFAR100 Domain CL with GPU
 dataset:
   workload: cifar100
-  batch_size: 64
+  batch_size: 128
   num_classes: 100
-  split: niid
-  niid:
-    alpha: 0.9  # moderate heterogeneity
+  split: iid
+  #niid:
+  #  alpha: 0.5  # moderate heterogeneity
+  #  seed: 42
+  
 
 model:
   name: resnet
+  pretrained: false
   num_classes: 100
 
 cl:
   strategy: domain
-  num_experiences: 8
+  num_experiences: 10
 
 training:
-  learning_rate: 0.0001
-  epochs: 10
+  learning_rate: 0.001
+  # epochs: 3
+  batch_size: 64
+
+latency:
+  enabled: true
+  sleep: false
+  sleep_log: true
+  sampling_mode: chunk  # options: mean, trace, chunk, random
+  threshold_multiplier: 13000.0
 
 server:
-  num_rounds: 10
-  num_clients: 5
-  fraction_fit: 1.0
+  num_rounds: 100
+  num_clients: 10
+  fraction_fit: 0.1 # 1.0
   min_fit: 5
   min_eval: 5
+  strategy: latency_aware_fedavg
+  #strategy: fedavg
 
 client:
-  num_cpus: 4
-  num_gpus: 0.2  # 20% GPU per client
-  epochs: 10
+  num_cpus: 12
+  num_gpus: 0.8  # 80% GPU per client
+  epochs: 3
 
 wb:
   project: autofl-testing
-  name: f_cifar100_domain_resnet_niid_0.9_gpu 
+  name: f_cifar100_domain_resnet_latency(chunk)_logsleep(mul130)_iid_exp10

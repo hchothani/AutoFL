@@ -189,3 +189,8 @@ autofl_env/*
 logs/*
 data/*
 temp_config.yaml
+
+
+omnet-data/*.csv
+omnet-data/**/*.png
+# csv exports from omnet++ simulations for latencies

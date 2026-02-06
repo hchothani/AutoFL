@@ -22,7 +22,7 @@ BATCH_SIZE = cfg.dataset.batch_size
 
 # --- Data --------------------------------------------------------------------
 class BDD100K10kDataset(Dataset):
-    """Real BDD100K 10k subset dataset loader.
+    """BDD100K 10k subset dataset loader.
     
     Uses actual images from data/bdd100k_images_10k/ and labels from data/bdd100k_labels/
     for domain incremental learning based on weather and time-of-day attributes.
