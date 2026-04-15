@@ -1,3 +1,7 @@
+import collections
+import collections.abc
+collections.Sequence = collections.abc.Sequence
+
 import os
 from torchvision import datasets, transforms
 
