@@ -1,0 +1,27 @@
+# Async CIFAR100 with GPU - ResNet18 async FL configuration
+defaults:
+  - ../config
+
+# model configuration
+model:
+  name: resnet  # this maps to the repo's ResNet18 implementation
+  num_classes: 100
+  pretrained: false
+
+# dataset configuration
+dataset:
+  workload: cifar100
+
+# server configuration
+
+# client configuration
+ 
+# cl configuration
+
+# async fl configuration
+
+# wandb configuration
+wb:
+  enabled: true
+  name: async_cifar100_resnet18_test
+  project: autofl-async
