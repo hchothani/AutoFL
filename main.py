@@ -31,17 +31,21 @@ def load_cfg():
             exp_cfg = OmegaConf.load(candidate)
             if "defaults" in exp_cfg:
                 del exp_cfg["defaults"]
+        else: print(f"[Config] File {candidate} not found. Using base config.")
     
     cfg = OmegaConf.merge(base_cfg, exp_cfg) if exp_cfg else base_cfg
     return cfg
 
-def prepare_run_directory(cfg) -> Path:
+def prepare_run_directory(cfg, is_async: bool) -> Path:
     """Prepare output directory for the run."""
     output_root = Path(cfg.get("logging", {}).get("output_root", "outputs"))
     output_root.mkdir(parents=True, exist_ok=True)
-    run_name = cfg.get("wb", {}).get("name", "autofl_async").replace(" ", "-").lower()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = output_root / f"{timestamp}_{run_name}_async"
+
+    mode_suffix = "async" if is_async else "sync"
+
+    run_name = cfg.get("wb", {}).get("name", f"autofl_{mode_suffix}").replace(" ", "-").lower()
+    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+    run_dir = output_root / f"{timestamp}_{run_name}_{mode_suffix}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
@@ -51,10 +55,14 @@ def main():
     print("=" * 60)
 
     cfg = load_cfg()
+    print("Configuration Loaded:\n" + OmegaConf.to_yaml(cfg))
     validate_config(cfg)
     
+    is_async = cfg.get("async", {}).get("enabled", False)
+    mode_suffix = "async" if is_async else "sync"
+
     # 1. Setup Environment
-    run_dir = prepare_run_directory(cfg)
+    run_dir = prepare_run_directory(cfg, is_async)
     init_runtime_recorder(cfg)
     atexit.register(flush_runtime_recorder)
     
@@ -66,27 +74,41 @@ def main():
     if wandb_enabled:
         wandb.init(
             project=cfg.get("wb", {}).get("project", "autofl-async"),
-            name=cfg.get("wb", {}).get("name", "async_run") + "_async",
+            name=cfg.get("wb", {}).get("name", "async_run") + f"{mode_suffix}",
             config=OmegaConf.to_container(cfg, resolve=True),
             mode=cfg.get("wb", {}).get("mode", "online"),
         )
+        print(f"[WandB] Initialized: {wandb.run.name}")
+    else:
+        print("[WandB] Disabled")
 
     # 3. Hardware & Models
-    device = torch.device("cuda:0" if cfg.client.num_gpus > 0.0 and torch.cuda.is_available() else "cpu")
-    print(f"Using Device: {device}")
+    if cfg.client.num_gpus > 0.0 and torch.cuda.is_available():
+        device = torch.device("cuda:0")
+        print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        device = torch.device("cpu")
+        print("Using CPU")
     
     def model_fn():
         return create_model(cfg)
 
     # 4. Load Data
+    print(f"\nLoading {cfg.dataset.workload} dataset..")
     train_loaders, test_loaders, global_test_loader = get_data_loaders(cfg, cfg.server.num_clients)
 
     # 5. Route to Runner
-    is_async = cfg.get("async", {}).get("enabled", False)
     if is_async:
         async_cfg = get_async_config(cfg)
         results = run_async_simulation(
-            cfg, async_cfg, model_fn, train_loaders, test_loaders, global_test_loader, device, wandb_enabled
+            cfg,
+            async_cfg,
+            model_fn,
+            train_loaders,
+            test_loaders,
+            global_test_loader,
+            device,
+            wandb_enabled
         )
         
         # Save results
