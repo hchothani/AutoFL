@@ -1,0 +1,34 @@
+# CIFAR10 Naive Strategy with GPU Support
+dataset:
+  workload: cifar10
+  batch_size: 128  # Large batch for GPU
+  num_classes: 10
+
+model:
+  name: resnet  # ResNet for better GPU utilization
+
+cl:
+  strategy: ewc
+  num_experiences: 5  # standard incremental learning experiences
+
+training:
+  learning_rate: 0.001
+  epochs: 5
+
+server:
+  num_rounds: 10
+  num_clients: 5  # Balanced for GPU memory
+  fraction_fit: 1.0
+  min_fit: 5  # Match num_clients
+  min_eval: 5  # Match num_clients
+
+  strategy: fedavg
+
+client:
+  num_cpus: 4
+  num_gpus: 0.2  # Share GPU among clients
+  epochs: 5
+
+wb:
+  project: autofl-testing  
+  name: f_cifar10_ewc_fedavg_gpu 

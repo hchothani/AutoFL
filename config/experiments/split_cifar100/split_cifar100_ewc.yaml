@@ -1,0 +1,39 @@
+# split cifar100 with elastic weight consolidation (ewc)
+
+dataset:
+  workload: split_cifar100
+  batch_size: 64
+  num_classes: 100  # total classes (will be split across tasks)
+
+model:
+  name: resnet
+  pretrained: false
+  num_classes: 10  # classes per task (100 classes / 10 tasks = 10 per task)
+
+cl:
+  strategy: ewc
+  num_experiences: 10  # split 100 classes into 10 tasks
+  ewc_lambda: 0.4  # importance weight for old tasks
+  ewc_decay_factor: null  # no decay
+  ewc_keep_importance_data: false
+
+training:
+  learning_rate: 0.001
+  epochs: 10
+
+server:
+  num_rounds: 15
+  num_clients: 5
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 8
+  num_gpus: 0.2
+  epochs: 10
+
+wb:
+  project: autofl-testing
+  name: f_split_cifar100_ewc_resnet_fedavg_gpu 

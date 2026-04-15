@@ -1,0 +1,38 @@
+# split cifar100 with hybrid continual learning (ewc + replay)
+
+dataset:
+  workload: split_cifar100
+  batch_size: 64
+  num_classes: 100  # total classes (will be split across tasks)
+
+model:
+  name: resnet
+  pretrained: false
+  num_classes: 10  # classes per task (100 classes / 10 tasks = 10 per task)
+
+cl:
+  strategy: hybrid
+  num_experiences: 10  # split 100 classes into 10 tasks
+  ewc_lambda: 0.4  # ewc importance weight
+  replay_mem_size: 1000  # replay buffer size
+
+training:
+  learning_rate: 0.001
+  epochs: 10
+
+server:
+  num_rounds: 20
+  num_clients: 5
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 4
+  num_gpus: 0.2
+  epochs: 10
+
+wb:
+  project: autofl-testing
+  name: f_split_cifar100_hybrid_resnet_fedavg 

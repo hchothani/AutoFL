@@ -1,0 +1,18 @@
+model:
+  name: simple_cnn
+  layers:
+    - type: conv
+      in_channels: 3
+      out_channels: 32
+      kernel_size: 3
+    - type: maxpool
+      kernel_size: 2
+    - type: conv
+      in_channels: 32
+      out_channels: 64
+      kernel_size: 3
+    - type: maxpool
+      kernel_size: 2
+    - type: linear
+      in_features: 64 * 6 * 6
+      out_features: 10  # Will be overridden by workload 

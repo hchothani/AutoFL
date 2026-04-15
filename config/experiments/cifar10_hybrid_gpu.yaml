@@ -1,0 +1,46 @@
+# cifar10 with hybrid continual learning (ewc + replay) and gpu
+
+# Hydra defaults - ensure experiment config takes precedence  
+defaults:
+  - _self_
+
+dataset:
+  workload: cifar10
+  batch_size: 128  # large batch for gpu
+  num_classes: 10
+  split: niid  # non-iid distribution
+  niid:
+    alpha: 0.5  # moderate heterogeneity
+
+model:
+  name: mobilenet
+  version: v2  # Use v2 for better stability
+  pretrained: false  # Disable pretrained to avoid parameter conflicts
+  num_classes: 10
+
+cl:
+  strategy: hybrid
+  num_experiences: 4
+  ewc_lambda: 0.4  # ewc importance weight
+  replay_mem_size: 300  # replay buffer size
+
+training:
+  learning_rate: 0.0005  # lower for mobilenet v3
+  epochs: 5
+
+server:
+  num_rounds: 10
+  num_clients: 4
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 4
+  min_eval: 4
+
+client:
+  num_cpus: 8
+  num_gpus: 0.25  # share gpu among clients
+  epochs: 10
+
+wb:
+  project: autofl-testing
+  name: cifar10_hybrid_mobilenetv3_niid 

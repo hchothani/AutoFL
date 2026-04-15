@@ -1,0 +1,45 @@
+# KITTI Domain Incremental Learning Experiment
+defaults:
+  - _self_
+  - /dataset: default
+  - /model: resnet  # Use ResNet for autonomous driving
+  - /cl: default
+  - /server: default
+  - /training: default
+  - /client: default
+  - /wb: default
+
+dataset:
+  workload: kitti_v2  # Use new implementation
+  batch_size: 16  # Smaller batch size for KITTI's larger images
+  num_classes: 10  # Object count classification (0-9 cars)
+
+model:
+  name: resnet
+  pretrained: true  # Use pretrained for better performance
+
+cl:
+  strategy: domain
+  num_experiences: 8  # 4 domains × 2 experiences each
+
+training:
+  learning_rate: 0.0001  # Lower LR for ResNet
+  epochs: 10  # More epochs for complex dataset
+  optimizer: adam
+  weight_decay: 0.0001
+
+server:
+  num_rounds: 10
+  num_clients: 5
+  fraction_fit: 1.0
+
+client:
+  num_gpus: 1
+
+wb:
+  project: autofl-kitti
+  name: kitti_domain_resnet
+  tags:
+    - kitti
+    - domain_incremental
+    - autonomous_driving 

@@ -1,0 +1,33 @@
+# CIFAR10 Fast GPU Training
+dataset:
+  workload: cifar10
+  batch_size: 128  # Large batch for GPU
+  num_classes: 10
+
+model:
+  name: resnet
+
+cl:
+  strategy: domain
+  num_experiences: 8
+
+training:
+  learning_rate: 0.001
+  epochs: 5
+
+server:
+  num_rounds: 5
+  num_clients: 2  # Fewer clients to fit in GPU memory
+  fraction_fit: 1.0
+  min_fit: 2  # Match num_clients
+  min_eval: 2  # Match num_clients
+
+client:
+  num_cpus: 8
+  num_gpus: 1.0  # Full GPU per client (Ray will handle sharing)
+  epochs: 5
+
+wb:
+  project: autofl-gpu-testing  
+  name: cifar10_gpu_fast
+  mode: disabled  # Disable for speed testing 

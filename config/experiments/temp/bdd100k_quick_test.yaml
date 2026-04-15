@@ -1,0 +1,39 @@
+# Quick test configuration for BDD100K
+defaults:
+  - _self_
+  - /dataset: default
+  - /model: simple_cnn  # Use simple CNN for quick testing
+  - /cl: default
+  - /server: default
+  - /training: default
+  - /client: default
+  - /wb: default
+
+dataset:
+  workload: bdd100k_v2
+  batch_size: 8  # Very small batch size for testing
+  num_classes: 10
+
+model:
+  name: simple_cnn
+
+cl:
+  strategy: domain
+  num_experiences: 4  # Reduced for testing (2 domains × 2 experiences)
+
+training:
+  learning_rate: 0.001
+  epochs: 2  # Minimal epochs for testing
+
+server:
+  num_rounds: 2  # Minimal rounds
+  num_clients: 2  # Minimal clients
+  fraction_fit: 1.0
+
+client:
+  num_gpus: 0  # CPU only for testing
+
+wb:
+  project: autofl-testing
+  name: bdd100k_quick_test
+  mode: disabled  # Disable W&B for testing 

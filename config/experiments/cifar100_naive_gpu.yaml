@@ -1,0 +1,48 @@
+# CIFAR100 Naive Strategy with GPU Support
+dataset:
+  workload: cifar100
+  batch_size: 128  # Large batch for GPU
+  num_classes: 100
+  split: niid
+  niid:
+    alpha: 0.2  # higher heterogeneity
+    seed: 42
+
+model:
+  name: resnet  # ResNet for better performance on CIFAR100
+  #name: mobilenet
+  #version: v3_large
+  pretrained: false
+  num_classes: 100
+
+cl:
+  strategy: naive
+  num_experiences: 10  # standard incremental learning experiences
+
+training:
+  learning_rate: 0.001  
+  # epochs: 5
+  batch_size: 64
+
+latency:
+  enabled: false
+  sleep: false
+  sleep_log: false  # Disable latency simulation for baseline
+  sampling_mode: chunk  # options: mean, trace, chunk, random
+  threshold_multiplier: 15000.0
+
+server:
+  num_rounds: 100
+  num_clients: 10  # Balanced for GPU memory
+  fraction_fit: 1.0
+  min_fit: 5  # Match num_clients
+  min_eval: 5  # Match num_clients
+
+client:
+  num_cpus: 12
+  num_gpus: 0.8  # Share GPU among clients
+  epochs: 3
+
+wb:
+  project: autofl-testing
+  name: f_cifar100_naive_resnet_no_latency_nosleep_niid(a=0.2)_exp10

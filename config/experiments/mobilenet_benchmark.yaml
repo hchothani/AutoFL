@@ -1,0 +1,40 @@
+# mobilenet benchmark across strategies
+dataset:
+  workload: cifar10
+  batch_size: 64
+  num_classes: 10
+  split: niid
+  niid:
+    alpha: 0.5  # moderate heterogeneity
+
+model:
+  name: mobilenet
+  version: v2
+  pretrained: false
+  num_classes: 10
+
+cl:
+  strategy: replay  # can change to ewc, hybrid for comparison
+  num_experiences: 4
+  replay_mem_size: 400
+  
+training:
+  learning_rate: 0.001  # good for mobilenet v2
+  epochs: 10
+
+server:
+  num_rounds: 4
+  num_clients: 4  
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 4
+  min_eval: 4
+
+client:
+  num_cpus: 4
+  num_gpus: 0.0
+  epochs: 3
+
+wb:
+  project: autofl-testing
+  name: mobilenet_v2_replay_niid_0.5 

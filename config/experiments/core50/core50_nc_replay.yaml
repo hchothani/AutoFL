@@ -1,0 +1,39 @@
+# core50 new classes (nc) scenario with experience replay
+
+dataset:
+  workload: core50
+  batch_size: 32
+  num_classes: 50  
+
+model:
+  name: simple_cnn  # Use simpler model to reduce GPU memory usage
+  pretrained: false
+  num_classes: 50  # CORe50 has 50 total classes
+
+cl:
+  strategy: replay
+  scenario: nc  # New Classes scenario
+  num_experiences: 9  # 9 experiences in NC scenario
+  replay_mem_size: 200  # Reduce buffer size to save memory
+  replay_selection: random
+
+training:
+  learning_rate: 0.001
+  epochs: 5  # Reduce epochs for quicker testing
+
+server:
+  num_rounds: 9  # Match number of experiences
+  num_clients: 5
+  strategy: fedavg
+  fraction_fit: 1.0
+  min_fit: 5
+  min_eval: 5
+
+client:
+  num_cpus: 8
+  num_gpus: 0.2  # Reduce GPU allocation
+  epochs: 5
+
+wb:
+  project: autofl-testing
+  name: f_core50_nc_replay_wide_resnet_fedavg_gpu
