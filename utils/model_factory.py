@@ -2,7 +2,7 @@
 # automatically determines correct model configuration based on workload and cl strategy
 
 
-from config_utils import load_config
+from utils.config_utils import load_config
 
 
 def get_workload_info(workload_name, cl_strategy, num_experiences):
