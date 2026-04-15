@@ -19,6 +19,11 @@ class SyncSimulatedClient(fl.client.NumPyClient):
         self.device = device
         self.cfg = cfg
 
+        # Extracting network simulatino params
+        self.simulate_delay = cfg.client.get("simulate_delay", False)
+        self.min_delay = cfg.client.get("min_delay", 0.5)
+        self.max_delay = cfg.client.get("max_delay", 3.0)
+
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
         """Extract model weights as a list of NumPy arrays."""
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
@@ -31,6 +36,10 @@ class SyncSimulatedClient(fl.client.NumPyClient):
 
     def fit(self, parameters: List[np.ndarray], config: Dict) -> Tuple[List[np.ndarray], int, Dict]:
         """Perform local training on the client's standard dataloader."""
+        # Simulating Download
+        if self.simulate_delay:
+            download_delay = random.uniform(self.min_delay/2.0, self.max_delay/2.0)
+            time.sleep(download_delay)
         self.set_parameters(parameters)
         self.model.train()
         
@@ -56,6 +65,11 @@ class SyncSimulatedClient(fl.client.NumPyClient):
                 total_loss += loss.item()
 
         avg_loss = total_loss / max(1, len(self.train_loader) * self.cfg.client.local_epochs)
+
+        # Simulate Upload Delay
+        if self.simulate_delay:
+            upload_delay = random.uniform(self.min_delay/2.0, self.max_delay /2.0)
+            time.sleep(upload_delay)
         
         # Return updated weights, number of local samples, and metrics
         return self.get_parameters(config={}), num_examples, {"loss": avg_loss}
