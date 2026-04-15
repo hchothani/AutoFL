@@ -16,7 +16,7 @@ def generate_run_name(cfg: DictConfig, is_async: bool) -> str:
     OmegaConf.update(cfg, "server.mode", mode_str, force_add=True)
     
     # 2. Extract the requested keys
-    keys_to_track = cfg.get("wandb", {}).get("run_name_keys", [])
+    keys_to_track = cfg.get("wb", {}).get("run_name_keys", [])
     
     for key in keys_to_track:
         val = OmegaConf.select(cfg, key)
