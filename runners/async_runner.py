@@ -16,7 +16,7 @@ from clients.async_client import create_simulated_clients
 @ray.remote
 def execute_ray_client(client_idx: int, client, params, start_timestamp) -> tuple:
     from flwr.common import FitIns
-    config = {"start_timestamp": _time.time()}
+    config = {"start_timestamp": start_time_stamp}
     return client_idx, client.fit(FitIns(parameters=params, config=config))
 
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
