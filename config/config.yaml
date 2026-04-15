@@ -54,7 +54,9 @@ async:
 wb:
   project: autofl-testing
   mode: online
-  # name: cifar10_naive_simple_cnn
+  run_name_keys:
+    - "dataset.workload"
+    - "model.name"
 
 latency:
   enabled: true

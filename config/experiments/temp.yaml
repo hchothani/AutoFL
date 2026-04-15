@@ -1,0 +1,8 @@
+model:
+  name: resnet18
+
+dataset:
+  workload: cifar100
+
+async:
+  enabled: true
