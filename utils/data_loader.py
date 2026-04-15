@@ -1,50 +1,56 @@
+# utils/data_loader.py
 import torch
 from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, transforms
-from omegaconf import DictConfig
 
-def get_data_loaders(cfg: DictConfig, num_clients: int):
-    """Create train/test data loaders for each client."""
+# Import the dynamic router
+from workloads import load_workload
+
+def partition_dataset(dataset, num_clients: int, partition_type: str = "iid"):
+    """Split the global dataset into smaller chunks for each vehicle/client."""
+    total_size = len(dataset)
     
-    # Get transforms based on dataset
-    if cfg.dataset.workload in ["cifar10", "cifar100"]:
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])
-        if cfg.dataset.workload == "cifar10":
-            train_dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
-            test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
-        else:
-            train_dataset = datasets.CIFAR100(root="./data", train=True, download=True, transform=transform)
-            test_dataset = datasets.CIFAR100(root="./data", train=False, download=True, transform=transform)
-            
-    elif cfg.dataset.workload in ["mnist", "permuted_mnist"]:
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,)),
-        ])
-        train_dataset = datasets.MNIST(root="./data", train=True, download=True, transform=transform)
-        test_dataset = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
+    if partition_type == "iid":
+        base_size = total_size // num_clients
+        remainder = total_size % num_clients
+        lengths = [base_size + 1 if i < remainder else base_size for i in range(num_clients)]
+        return random_split(dataset, lengths, generator=torch.Generator().manual_seed(42))
+        
+    elif partition_type == "non_iid_dirichlet":
+        # Future implementation for data heterogeneity
+        raise NotImplementedError("Dirichlet non-IID partitioning coming soon.")
     else:
-        raise ValueError(f"Unsupported dataset: {cfg.dataset.workload}")
+        raise ValueError(f"Partition type '{partition_type}' is not supported.")
 
-    # Split training data among clients (IID split)
-    samples_per_client = len(train_dataset) // num_clients
-    client_sizes = [samples_per_client] * num_clients
-    # Add remaining samples to last client
-    client_sizes[-1] += len(train_dataset) - sum(client_sizes)
 
-    client_datasets = random_split(train_dataset, client_sizes)
-
+def get_data_loaders(cfg, num_clients: int):
+    """
+    Main entry point for main.py. 
+    Handles fetching, partitioning, and wrapping datasets into DataLoaders.
+    """
+    workload_name = cfg.dataset.workload
+    data_dir = cfg.dataset.get("data_dir", "./data")
     batch_size = cfg.client.batch_size
+    partition_type = cfg.dataset.get("split", "iid")
+
+    # 1. Ask the Workload Router for the raw datasets
+    global_train_dataset, global_test_dataset = load_workload(workload_name, data_dir)
+
+    # 2. Partition the data for the simulated clients
+    client_train_subsets = partition_dataset(global_train_dataset, num_clients, partition_type)
+    client_test_subsets = partition_dataset(global_test_dataset, num_clients, partition_type)
+
+    # 3. Wrap the subsets in PyTorch DataLoaders
     train_loaders = [
-        DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0)
-        for ds in client_datasets
+        DataLoader(subset, batch_size=batch_size, shuffle=True, drop_last=True)
+        for subset in client_train_subsets
+    ]
+    
+    test_loaders = [
+        DataLoader(subset, batch_size=batch_size, shuffle=False)
+        for subset in client_test_subsets
     ]
 
-    # Each client gets full test set for simplicity
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loaders = [test_loader] * num_clients
+    # 4. Create the central evaluation loader for the server
+    global_test_loader = DataLoader(global_test_dataset, batch_size=128, shuffle=False)
 
-    return train_loaders, test_loaders, test_loader
+    return train_loaders, test_loaders, global_test_loader
