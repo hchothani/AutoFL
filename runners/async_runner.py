@@ -13,7 +13,7 @@ from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
 
-@ray_remote
+@ray.remote
 def execute_ray_client(client_idx: int, client, params, start_timestamp) -> tuple:
     from flwr.common import FitIns
     config = {"start_timestamp": _time.time()}
