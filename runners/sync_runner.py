@@ -90,7 +90,6 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         client_resources={"num_cpus": cfg.client.num_cpus, "num_gpus": cfg.client.num_gpus},
         ray_init_args={
             ignore_reinit_error=True,
-            include_dashboard=False
         },
     )
     

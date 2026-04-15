@@ -13,11 +13,25 @@ from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
 
+#@ray.remote
+#def execute_ray_client(client_idx: int, client, params, start_timestamp) -> tuple:
+#    from flwr.common import FitIns
+#    config = {"start_timestamp": start_timestamp}
+#    return client_idx, client.fit(FitIns(parameters=params, config=config))
+
 @ray.remote
-def execute_ray_client(client_idx: int, client, params, start_timestamp) -> tuple:
-    from flwr.common import FitIns
-    config = {"start_timestamp": start_timestamp}
-    return client_idx, client.fit(FitIns(parameters=params, config=config))
+class AsyncRayClientActor:
+    def __init__(self, client_idx, client_obj):
+        self.client_idx = client_idx
+        self.client = client_obj
+        
+    def fit(self, params, start_timestamp):
+        from flwr.common import FitIns
+        config = {"start_timestamp": start_timestamp}
+        # The heavy PyTorch DataLoader stays in memory; only weights are processed
+        fit_res = self.client.fit(FitIns(parameters=params, config=config))
+        return self.client_idx, fit_res
+
 
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     """Extract async configuration from the config."""
@@ -149,61 +163,63 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     eval_counter, last_eval_time = 0, start_time
 
     # Spawn Initial Batch of Clients
-    for _ in range(min(max_workers, num_clients)):
-        if client_queue:
-            client_idx = client_queue.pop(0)
-            with param_lock:
-                params = current_params
+    print(f"\nDeploying {num_clients} stateful vehicle actors to the Ray cluster...")
+    ray_actors = {}
+    
+    # 1. Boot up the permanent Actors applying your strict Blueprint
+    for i in range(num_clients):
+        actor = AsyncRayClientActor.options(
+            num_cpus=cfg.client.num_cpus,
+            num_gpus=cfg.client.num_gpus
+        ).remote(client_idx=i, client_obj=clients[i])
+        ray_actors[i] = actor
 
-            task = execute_ray_client.options(
-                num_cpus=cfg.client.num_cpus,
-                num_gpus=cfg.client.num_gpus
-            ).remote(client_idx, clients[client_idx], params, time.time())
+    active_tasks = {}
+    eval_counter, last_eval_time = 0, start_time
 
-            active_tasks[task] = client_idx
+    # 2. Command ALL actors to begin training immediately
+    # Ray's internal scheduler naturally bottlenecks them based on main.py
+    for client_idx, actor in ray_actors.items():
+        with param_lock:
+            params = current_params
+        task = actor.fit.remote(params, time.time())
+        active_tasks[task] = client_idx
 
-
-#    executor = ThreadPoolExecutor(max_workers=max_workers)
-#    active_futures, client_queue = set(), list(range(num_clients))
-#    eval_counter, last_eval_time = 0, start_time
-
-#    for _ in range(min(max_workers, num_clients)):
-#        if client_queue:
-#            client_idx = client_queue.pop(0)
-#            active_futures.add((executor.submit(train_client, client_idx), client_idx))
-
-    while time.time() < end_time and (active_tasks or client_queue):
-#        completed = [(f, c) for f, c in list(active_futures) if f.done()]
+    # 3. Continuous Execution Loop
+    while time.time() < end_time and active_tasks:
         ready_tasks, _ = ray.wait(list(active_tasks.keys()), num_returns=1, timeout=0.1) 
+        
         for task in ready_tasks:
             client_idx = active_tasks.pop(task)
             try:
                 returned_client_idx, fit_res = ray.get(task)
                 t_diff = aggregate_result(returned_client_idx, fit_res)
-                print(f"[t={time.time() - start_time:.1f}s] Client {client_idx} completed (loss: {fit_res.metrics.get('loss', 0):.4f})")
+                print(f"[t={time.time() - start_time:.1f}s] Vehicle {client_idx} completed (loss: {fit_res.metrics.get('loss', 0):.4f})")
             except Exception as e:
-                print(f"[Error] Client {client_idx} failed: {e}")
+                print(f"[Error] Vehicle {client_idx} failed: {e}")
             
+            # RE-SUBMIT IMMEDIATELY (passing only lightweight params)
             if time.time() < end_time:
                 with param_lock:
                     params = current_params
-                new_task = execute_ray_client.options(
-                    num_cpus=cfg.client.num_cpus,
-                    num_gpus=cfg.client.num_gpus
-                ).remote(client_idx, clients[client_idx], params, time.time())
+                new_task = ray_actors[client_idx].fit.remote(params, time.time())
                 active_tasks[new_task] = client_idx
 
+        # Evaluation Block
         if time.time() - last_eval_time >= waiting_interval:
             eval_counter += 1
             with param_lock:
                 eval_params = parameters_to_ndarrays(current_params)
             loss, acc = evaluate_global_model(global_model, eval_params, global_test_loader, device)
-            print(f"\\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}\\n")
+            print(f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}\n")
             
             if wandb_enabled:
                 wandb.log({"async/loss": loss, "async/accuracy": acc, "async/updates": update_count, "async/elapsed_time": time.time() - start_time}, step=eval_counter)
             last_eval_time = time.time()
 
+    # Clean up actors
+    for actor in ray_actors.values():
+        ray.kill(actor)
     ray.shutdown()    
 
     with param_lock:

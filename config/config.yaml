@@ -9,6 +9,7 @@ client:
   min_delay: 0.5
   max_delay: 3
   falloff: 0.0
+  max_concurrency: null
 
 server:
   num_clients: 5

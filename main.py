@@ -70,6 +70,25 @@ def main():
     with open("temp_config.yaml", "w") as f:
         OmegaConf.save(cfg, f)
 
+    # Using Ray for homogenous bottlenecks across sync and async
+    ray_init_args = {
+        "ignore_reinit_error": True,
+        "include_dashboard": False
+    }
+
+    max_concurrency = cfg.client.get("max_concurrency")
+    if max_concurrency is not None:
+        total_cpus = max_concurrency * cfg.client.num_cpus
+        total_gpus = max_concurrency * cfg.client.num_gpus
+        ray_init_args["num_cpus"] = total_cpus
+        ray_init_args["num_gpus"] = total_gpus
+        print(f"\n[Ray] Manual bottleneck: Capping at {max_concurrency} concurrent vehicles.")
+    else:
+        print("\n[Ray] Unconstrained mode: Utilizing all available system hardware.")
+    
+    if not ray.is_initialized():
+        ray.init(**ray_init_args)
+
     # 2. Initialize WandB
     wandb_enabled = cfg.get("wb", {}).get("mode", "online") != "disabled"
     if wandb_enabled:
