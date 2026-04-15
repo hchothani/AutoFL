@@ -16,6 +16,7 @@ from utils.latency_simulator import init_runtime_recorder, flush_runtime_recorde
 # Import our reorganized modules
 from utils.data_loader import get_data_loaders
 from runners.async_runner import get_async_config, run_async_simulation
+from runners.sync_runner import get_sync_config, run_sync_simulation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

@@ -9,7 +9,8 @@ from omegaconf import DictConfig, OmegaConf
 import wandb
 
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
-from algorithms.async_fl import AsynchronousStrategy, AsyncHistory, create_simulated_clients
+from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
+from clients.async_client import create_simulated_clients
 
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     """Extract async configuration from the config."""

@@ -1,155 +1,100 @@
-import atexit
-from datetime import datetime
-from pathlib import Path
-import sys
-import os
-import warnings
+import time
+from typing import Dict, Optional, Tuple, List
+import numpy as np
 
+import flwr as fl
 import torch
-import flwr
-from flwr.simulation import run_simulation
-from flwr.client import ClientApp
-from flwr.server import ServerApp
+import wandb
 
-from omegaconf import OmegaConf
+from clients.sync_client import SyncSimulatedClient
 
-from utils.latency_simulator import init_runtime_recorder, flush_runtime_recorder
+def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_loader, device, wandb_enabled):
+    """Pure synchronous FL execution loop using standard Flower logic."""
+    num_rounds = cfg.server.num_rounds
+    num_clients = cfg.server.num_clients
+    
+    print(f"\n[Sync Runner] Initializing synchronous simulation for {num_rounds} rounds...")
 
-# Ignore Deprecation Warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+    # 1. Centralized Evaluator (Runs on the Server)
+    def evaluate_fn(server_round: int, parameters: fl.common.NDArrays, config: Dict) -> Optional[Tuple[float, Dict]]:
+        model = model_fn().to(device)
+        params_dict = zip(model.state_dict().keys(), parameters)
+        state_dict = {k: torch.tensor(v) for k, v in params_dict}
+        model.load_state_dict(state_dict, strict=True)
+        
+        model.eval()
+        criterion = torch.nn.CrossEntropyLoss()
+        total_loss, correct, total = 0.0, 0, 0
+        
+        with torch.no_grad():
+            for batch in global_test_loader:
+                if isinstance(batch, dict):
+                    images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
+                else:
+                    images, labels = batch[0].to(device), batch[1].to(device)
+                    
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                total_loss += loss.item() * labels.size(0)
+                correct += outputs.max(1)[1].eq(labels).sum().item()
+                total += labels.size(0)
 
+        avg_loss = total_loss / max(total, 1)
+        accuracy = correct / max(total, 1)
+        
+        print(f"[Round {server_round}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+        
+        if wandb_enabled:
+            wandb.log({
+                "sync/loss": avg_loss, 
+                "sync/accuracy": accuracy,
+                "sync/round": server_round
+            }, step=server_round)
+            
+        return avg_loss, {"accuracy": accuracy}
 
-# ==== Configuration Loading (must happen before imports that use config) ====
-def load_cfg():
-    base_config_path = "config/config.yaml"
-    base_cfg = OmegaConf.load(base_config_path)
-
-    exp_cfg = None
-    if "--config-path" in sys.argv and "--config-name" in sys.argv:
-        p_idx = sys.argv.index("--config-path") + 1
-        n_idx = sys.argv.index("--config-name") + 1
-        if p_idx < len(sys.argv) and n_idx < len(sys.argv):
-            cfg_path = sys.argv[p_idx]
-            cfg_name = sys.argv[n_idx]
-            candidate = os.path.join(cfg_path, f"{cfg_name}.yaml")
-            if os.path.isfile(candidate):
-                exp_cfg = OmegaConf.load(candidate)
-                # Remove Hydra-style defaults field if present
-                if "defaults" in exp_cfg:
-                    del exp_cfg["defaults"]
-            else:
-                print(f"[Config] File {candidate} not found. Using only base config.")
-
-    if exp_cfg is not None:
-        cfg = OmegaConf.merge(base_cfg, exp_cfg)  # exp_cfg overrides base_cfg
-        print(f"[Config] Loaded experiment config: {cfg_name}")
-        print(f"[Config] Model from experiment: {cfg.model.name}")
-    else:
-        cfg = base_cfg
-        print(f"[Config] Using base config only")
-    return cfg
-
-
-cfg = load_cfg()
-print("Configuration Loaded:\n" + OmegaConf.to_yaml(cfg))
-
-# validate configuration
-from utils.model_factory import validate_config
-
-validate_config(cfg)
-
-
-def _sanitize_segment(text: str) -> str:
-    allowed = "abcdefghijklmnopqrstuvwxyz0123456789-_"
-    text = text.lower().replace(" ", "-")
-    return "".join(ch if ch in allowed else "-" for ch in text).strip("-")
-
-
-def prepare_run_directory(cfg):
-    if "logging" not in cfg or cfg.logging is None:
-        cfg.logging = OmegaConf.create({})
-    if "output_root" not in cfg.logging or cfg.logging.output_root is None:
-        cfg.logging.output_root = "outputs"
-    output_root = Path(cfg.logging.output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    run_name = None
-    if "wb" in cfg and cfg.wb is not None:
-        run_name = cfg.wb.get("name")
-    if not run_name:
-        dataset_name = cfg.dataset.workload if "dataset" in cfg else "dataset"
-        model_name = cfg.model.name if "model" in cfg else "model"
-        run_name = f"{dataset_name}_{model_name}"
-
-    run_name = _sanitize_segment(run_name) or "autofl"
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    latency_cfg = (
-        cfg.latency
-        if "latency" in cfg and cfg.latency is not None
-        else OmegaConf.create({})
+    # 2. Strategy Initialization
+    strategy = fl.server.strategy.FedAvg(
+        fraction_fit=cfg.server.fraction_fit,
+        min_fit_clients=cfg.server.min_fit,
+        min_available_clients=num_clients,
+        evaluate_fn=evaluate_fn
     )
-    latency_enabled = bool(latency_cfg.get("enabled", False))
-    latency_suffix = "latency_on" if latency_enabled else "latency_off"
 
-    append_name = cfg.logging.get("append_run_name_to_dir", True)
-    folder_segments = [timestamp]
-    if append_name:
-        folder_segments.append(run_name)
-    folder_segments.append(latency_suffix)
-    run_folder = "_".join(seg for seg in folder_segments if seg)
-    run_dir = output_root / run_folder
-    run_dir.mkdir(parents=True, exist_ok=True)
-    cfg.logging.run_output_dir = str(run_dir)
-    return run_dir
+    # 3. Client Factory (Spins up clients on demand)
+    def client_fn(cid: str) -> fl.client.Client:
+        client_idx = int(cid)
+        return SyncSimulatedClient(
+            cid=cid,
+            model_fn=model_fn,
+            train_loader=train_loaders[client_idx],
+            test_loader=test_loaders[client_idx],
+            device=device,
+            cfg=cfg
+        ).to_client()
 
+    # 4. Execute Simulation
+    start_time = time.time()
+    
+    # Run the Flower simulation engine
+    history = fl.simulation.start_simulation(
+        client_fn=client_fn,
+        num_clients=num_clients,
+        config=fl.server.ServerConfig(num_rounds=num_rounds),
+        strategy=strategy,
+        client_resources={"num_cpus": cfg.client.num_cpus, "num_gpus": cfg.client.num_gpus},
+    )
+    
+    elapsed = time.time() - start_time
+    print(f"\n[Sync Runner] Simulation Complete in {elapsed:.1f}s")
+    
+    # 5. Extract Final Metrics
+    final_loss = history.losses_centralized[-1][1] if history.losses_centralized else 0.0
+    final_acc = history.metrics_centralized.get("accuracy", [(0, 0.0)])[-1][1] if history.metrics_centralized else 0.0
 
-run_dir = prepare_run_directory(cfg)
-init_runtime_recorder(cfg)
-atexit.register(flush_runtime_recorder)
-
-# Save to temp config for other modules
-with open("temp_config.yaml", "w") as f:
-    OmegaConf.save(cfg, f)
-
-# Import modules that depend on config AFTER saving it
-from mclientCL import client_fn
-from mclserver import server_fn
-
-
-def get_model(cfg):
-    """Get model based on configuration"""
-    # use intelligent model factory
-    from utils.model_factory import create_model
-
-    return create_model(cfg)
-
-
-def main():
-    client = ClientApp(client_fn=client_fn)
-    server = ServerApp(server_fn=server_fn)
-    backend_config = {
-        "client_resources": {
-            "num_cpus": cfg.client.num_cpus,
-            "num_gpus": cfg.client.num_gpus,
-        }
+    return {
+        "final_loss": final_loss,
+        "final_accuracy": final_acc,
+        "total_updates": num_rounds * int(num_clients * cfg.server.fraction_fit),
+        "elapsed_time": elapsed,
     }
-
-    # Run Simulation
-    print("Running Simulation")
-
-    run_simulation(
-        server_app=server,
-        client_app=client,
-        num_supernodes=cfg.server.num_clients,
-        backend_config=backend_config,
-    )
-
-    flush_runtime_recorder()
-
-    # Clean up temp config
-    if os.path.exists("temp_config.yaml"):
-        os.remove("temp_config.yaml")
-
-
-if __name__ == "__main__":
-    main()
