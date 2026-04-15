@@ -52,7 +52,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
             wandb.log({
                 "sync/loss": avg_loss, 
                 "sync/accuracy": accuracy,
-                "sync/round": server_round
+                "sync/round": server_round,
                 "sync/elapsed_time": elapsed_time
             }, step=server_round)
             
