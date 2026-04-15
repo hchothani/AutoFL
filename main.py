@@ -1,6 +1,7 @@
 import ray
 import sys
 import os
+os.environ["RAY_BACKEND_LOG_LEVEL"] = "fatal"
 import atexit
 from datetime import datetime
 from pathlib import Path
