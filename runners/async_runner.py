@@ -169,7 +169,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 #            client_idx = client_queue.pop(0)
 #            active_futures.add((executor.submit(train_client, client_idx), client_idx))
 
-    while time.time() < end_time and (active_futures or client_queue):
+    while time.time() < end_time and (active_tasks or client_queue):
 #        completed = [(f, c) for f, c in list(active_futures) if f.done()]
         ready_tasks, _ = ray.wait(list(active_tasks.keys()), num_returns=1, timeout=0.1) 
         for task in ready_tasks:
