@@ -6,7 +6,7 @@ from . import mnist
 _WORKLOAD_REGISTRY = {
     "cifar10": cifar10.get_datasets,
     "cifar100": cifar100.get_datasets,
-    "gtsrb": gtsrb.get_datasets
+    "gtsrb": gtsrb.get_datasets,
     "mnist": mnist.get_datasets
 }
 
