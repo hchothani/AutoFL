@@ -16,7 +16,7 @@ from utils.latency_simulator import init_runtime_recorder, flush_runtime_recorde
 # Import our reorganized modules
 from utils.data_loader import get_data_loaders
 from runners.async_runner import get_async_config, run_async_simulation
-from runners.sync_runner import get_sync_config, run_sync_simulation
+from runners.sync_runner import run_sync_simulation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -100,6 +100,7 @@ def main():
 
     # 5. Route to Runner
     if is_async:
+        print("\n[Router] Laynching Asynchronous Simulation")
         async_cfg = get_async_config(cfg)
         results = run_async_simulation(
             cfg,
@@ -117,6 +118,18 @@ def main():
         with open(results_path, "w") as f:
             OmegaConf.save(OmegaConf.create(results), f)
         print(f"\\nResults saved to: {results_path}")
+
+    else:
+       print("\n[Router] Launching Synchronous Simulation...") 
+       results = run_sync_simulation(
+           cfg=cfg,
+           model_fn=model_fn,
+           train_loaders=train_loaders,
+           test_loaders=test_loaders,
+           global_test_loader=global_test_loader,
+           device=device
+           wandb_enabled=wandb_enabled
+       )
 
     flush_runtime_recorder()
     if wandb_enabled:
