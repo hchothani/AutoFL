@@ -15,6 +15,8 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
     
     print(f"\n[Sync Runner] Initializing synchronous simulation for {num_rounds} rounds...")
 
+    start_time = time.time();
+
     # 1. Centralized Evaluator (Runs on the Server)
     def evaluate_fn(server_round: int, parameters: fl.common.NDArrays, config: Dict) -> Optional[Tuple[float, Dict]]:
         model = model_fn().to(device)
@@ -41,17 +43,20 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
 
         avg_loss = total_loss / max(total, 1)
         accuracy = correct / max(total, 1)
+
+        elapsed_time = time.time() - start_time
         
-        print(f"[Round {server_round}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+        print(f"[Round {server_round} | {elapsed_time:.1f}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
         
         if wandb_enabled:
             wandb.log({
                 "sync/loss": avg_loss, 
                 "sync/accuracy": accuracy,
                 "sync/round": server_round
+                "sync/elapsed_time": elapsed_time
             }, step=server_round)
             
-        return avg_loss, {"accuracy": accuracy}
+        return avg_loss, {"accuracy": accuracy, "elapsed_time": elapsed_time}
 
     # 2. Strategy Initialization
     strategy = fl.server.strategy.FedAvg(
@@ -74,7 +79,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         ).to_client()
 
     # 4. Execute Simulation
-    start_time = time.time()
+#    start_time = time.time()
     
     # Run the Flower simulation engine
     history = fl.simulation.start_simulation(
@@ -85,8 +90,8 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         client_resources={"num_cpus": cfg.client.num_cpus, "num_gpus": cfg.client.num_gpus},
     )
     
-    elapsed = time.time() - start_time
-    print(f"\n[Sync Runner] Simulation Complete in {elapsed:.1f}s")
+    total_elapsed = time.time() - start_time
+    print(f"\n[Sync Runner] Simulation Complete in {total_elapsed:.1f}s")
     
     # 5. Extract Final Metrics
     final_loss = history.losses_centralized[-1][1] if history.losses_centralized else 0.0
