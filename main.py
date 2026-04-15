@@ -54,7 +54,7 @@ def prepare_run_directory(cfg, is_async: bool) -> Path:
 
     mode_suffix = "async" if is_async else "sync"
 
-    run_name = cfg.get("wb", {}).get("name", f"autofl_{mode_suffix}").replace(" ", "-").lower()
+    run_name = generate_run_name(cfg, is_async)
     timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     run_dir = output_root / f"{timestamp}_{run_name}_{mode_suffix}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -102,7 +102,7 @@ def main():
     # 2. Initialize WandB
     wandb_enabled = cfg.get("wb", {}).get("mode", "online") != "disabled"
     if wandb_enabled:
-        run_name = generate_run_name{cfg, is_async}
+        run_name = generate_run_name(cfg, is_async)
         wandb.init(
             project=cfg.get("wb", {}).get("project", "autofl-async"),
             name=run_name,
