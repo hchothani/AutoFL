@@ -112,12 +112,14 @@ def main():
             device,
             wandb_enabled
         )
+
         
-        # Save results
-        results_path = run_dir / "async_results.yaml"
-        with open(results_path, "w") as f:
-            OmegaConf.save(OmegaConf.create(results), f)
-        print(f"\\nResults saved to: {results_path}")
+        safe_results = {
+            "final_loss": float(results["final_loss"]),
+            "final_accuracy": float(results["final_accuracy"]),
+            "total_updates" : int(results["total_updates"]),
+            "elapsed_time": float(results["elapsed_time"])
+        }        
 
     else:
        print("\n[Router] Launching Synchronous Simulation...") 
@@ -130,6 +132,19 @@ def main():
            device=device,
            wandb_enabled=wandb_enabled
        )
+
+
+        safe_results = {
+            "final_loss": float(results["final_loss"]),
+            "final_accuracy": float(results["final_accuracy"]),
+            "total_updates" : int(results["total_updates"]),
+            "elapsed_time": float(results["elapsed_time"])
+        }        
+    
+    results_path = run_dir / f"{mode_suffix}_results.yaml"
+    with open(results_path, "w") as f:
+        OmegaConf.save(OmegaConf.create(safe_results), f)
+        print(f"\\nResults saved to: {results_path}")
 
     flush_runtime_recorder()
     if wandb_enabled:
