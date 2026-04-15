@@ -1,3 +1,8 @@
+# Patch for old torch versions to be able to work with modern data transforms
+import collections
+import collections.abc
+collections.Sequence = collections.abc.Sequence
+
 import time
 from concurrent.futures import ThreadPoolExecutor
 import ray

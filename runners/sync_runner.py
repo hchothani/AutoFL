@@ -1,3 +1,7 @@
+import collections
+import collections.abc
+collections.Sequence = collections.abc.Sequence
+
 import time
 from typing import Dict, Optional, Tuple, List
 import numpy as np
