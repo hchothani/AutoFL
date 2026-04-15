@@ -34,7 +34,6 @@ def generate_run_name(cfg: DictConfig, is_async: bool) -> str:
             parts.append(str(val))
             
     # 3. Add a short timestamp to guarantee absolute uniqueness
-    parts.append(run_id)
     
     # Example Output: "cifar10-resnet18-async-delay-1430"
     return "-".join(parts)
