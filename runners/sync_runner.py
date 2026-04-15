@@ -101,5 +101,5 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         "final_loss": final_loss,
         "final_accuracy": final_acc,
         "total_updates": num_rounds * int(num_clients * cfg.server.fraction_fit),
-        "elapsed_time": elapsed,
+        "elapsed_time": total_elapsed,
     }
