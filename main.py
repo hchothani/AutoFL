@@ -121,11 +121,6 @@ def main():
         device = torch.device("cpu")
         print("Using CPU")
 
-    model_fn = get_model_fn(cfg)    
-
-    test_model = model_fn()
-    print(f"[Model] Successfully initialized {cfg.model.name} for {cfg.dataset.num_classes} classes.")
-    del test_model
 
     # 4. Load Data
     print(f"\n[System] Loading {cfg.dataset.workload} Dataset..")
@@ -136,7 +131,15 @@ def main():
     cfg.dataset.input_size = metadata["input_size"]
 
     print(f"[System] Auto-configured model inputs: {cfg.dataset.in_channels} channels, {cfg.dataset.num_classes} classes.")
+
+    # Loading Models 
+    model_fn = get_model_fn(cfg)    
+    test_model = model_fn()
+    print(f"[Model] Successfully initialized {cfg.model.name} for {cfg.dataset.num_classes} classes.")
+    del test_model
+
     # 5. Route to Runner
+
     if is_async:
         print("\n[Router] Laynching Asynchronous Simulation")
         async_cfg = get_async_config(cfg)
