@@ -26,11 +26,14 @@ cl:
 
 model:
   name: simple_cnn
-  num_classes: 10  # Number of output classes (10 for CIFAR10, 100 for CIFAR100)
 
 dataset:
   workload: cifar10
   split: iid
+  num_classes: 10
+  in_channels: 3
+  input_size: 32
+  
 
 async:
   enabled: false

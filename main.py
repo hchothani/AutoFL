@@ -19,7 +19,7 @@ import wandb
 from omegaconf import OmegaConf
 
 # Keep your existing imports
-from utils.model_factory import validate_config, create_model
+from utils.model_factory import validate_config, get_model_fn
 from utils.latency_simulator import init_runtime_recorder, flush_runtime_recorder
 
 # Import our reorganized modules
@@ -118,14 +118,22 @@ def main():
     else:
         device = torch.device("cpu")
         print("Using CPU")
-    
-    def model_fn():
-        return create_model(cfg)
+
+    model_fn = get_model_fn(cfg)    
+
+    test_model = model_fn()
+    print(f"[Model] Successfully initialized {cfg.model.name} for {cfg.dataset.num_classes} classes.")
+    del test_model
 
     # 4. Load Data
-    print(f"\nLoading {cfg.dataset.workload} dataset..")
-    train_loaders, test_loaders, global_test_loader = get_data_loaders(cfg, cfg.server.num_clients)
+    print(f"\n[System] Loading {cfg.dataset.workload} Dataset..")
+    train_loaders, test_loaders, global_test_loader, metadata = get_data_loaders(cfg, cfg.server.num_clients)
 
+    cfg.dataset.num_classes = metadata["num_classes"] 
+    cfg.dataset.in_channels = metadata["in_channels"]
+    cfg.dataset.input_size = metadata["input_size"]
+
+    print(f"[System] Auto-configured model inputs: {cfg.dataset.in_channels} channels, {cfg.dataset.num_classes} classes.")
     # 5. Route to Runner
     if is_async:
         print("\n[Router] Laynching Asynchronous Simulation")

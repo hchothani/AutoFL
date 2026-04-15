@@ -1,11 +1,13 @@
 from . import cifar10
 from . import cifar100
 from . import gtsrb
+from . import mnist
 
 _WORKLOAD_REGISTRY = {
     "cifar10": cifar10.get_datasets,
     "cifar100": cifar100.get_datasets,
     "gtsrb": gtsrb.get_datasets
+    "mnist": mnist.get_datasets
 }
 
 def load_workload(workload_name: str, data_dir: str):

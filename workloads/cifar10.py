@@ -33,5 +33,11 @@ def get_datasets(data_dir: str):
     test_dataset = datasets.CIFAR10(
         root=data_dir, train=False, download=True, transform=test_transform
     )
+
+    metadata = {
+        "num_classes": 10,
+        "in_channels": 3,
+        "input_size": 32
+    }
     
-    return train_dataset, test_dataset
+    return train_dataset, test_dataset, metadata

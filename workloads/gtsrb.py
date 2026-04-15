@@ -22,5 +22,11 @@ def get_datasets(data_dir: str):
     # Note: GTSRB uses 'split' instead of 'train=True/False' in Torchvision
     train_dataset = datasets.GTSRB(root=data_dir, split='train', download=True, transform=train_transform)
     test_dataset = datasets.GTSRB(root=data_dir, split='test', download=True, transform=test_transform)
+
+    metadata = {
+        "num_classes": 43,
+        "in_channels": 3,
+        "input_size": 32
+    }
     
-    return train_dataset, test_dataset
+    return train_dataset, test_dataset, metadata

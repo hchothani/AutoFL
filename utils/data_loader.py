@@ -33,7 +33,7 @@ def get_data_loaders(cfg, num_clients: int):
     partition_type = cfg.dataset.get("split", "iid")
 
     # 1. Ask the Workload Router for the raw datasets
-    global_train_dataset, global_test_dataset = load_workload(workload_name, data_dir)
+    global_train_dataset, global_test_dataset, metadata = load_workload(workload_name, data_dir)
 
     # 2. Partition the data for the simulated clients
     client_train_subsets = partition_dataset(global_train_dataset, num_clients, partition_type)
@@ -53,4 +53,4 @@ def get_data_loaders(cfg, num_clients: int):
     # 4. Create the central evaluation loader for the server
     global_test_loader = DataLoader(global_test_dataset, batch_size=128, shuffle=False)
 
-    return train_loaders, test_loaders, global_test_loader
+    return train_loaders, test_loaders, global_test_loader, metadata
