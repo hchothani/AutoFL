@@ -1,0 +1,11 @@
+async:
+  enabled: false
+
+dataset:
+    workload: "cifar10"
+
+server:
+  num_rounds: 50
+  num_clients: 10
+  fraction_fit: 0.5
+  min_fit: 5
