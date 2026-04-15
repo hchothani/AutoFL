@@ -2,31 +2,52 @@
 client:
   num_cpus: 8
   num_gpus: 0.20
-  type: normal
-  epochs: 3
+  local_epochs: 3
+  learning_rate: 0.001
+  batch_size: 32
+  simulate_delay: false
+  min_delay: 0.5
+  max_delay: 3
   falloff: 0.0
+
 server:
   num_clients: 10
-  fraction_fit: 1
-  fraction_eval: 1
-  min_fit: 5
-  min_eval: 5
   num_rounds: 10
-  strategy: latency_aware_fedavg
+  fraction_fit: 1.0
+  fraction_eval: 1.0
+  min_fit: 10
+  min_eval: 10
+  num_rounds: 10
+  strategy: fedavg
+
 cl:
   num_experiences: 5
-  strategy: naive # naive or domain | domain is for domain incremental learning, naive is for experience incrental learning (afaik)
-  split: random
+  strategy: naive 
+
 model:
   name: simple_cnn
   num_classes: 10  # Number of output classes (10 for CIFAR10, 100 for CIFAR100)
+
 dataset:
   workload: cifar10
-  batch_size: 32
   split: iid
-  # niid:
-  #   alpha: 1.0
-  #   seed: 42
+
+async:
+  enabled: false
+  total_train_time: 120
+  waiting_interval: 10
+  max_workers: 4
+  aggregation_stratgey: fedasync
+  staleness_alpha: 0.5
+  fedasync_mixing_alpha: 0.9
+  fedasync_a: 0.5
+  use_staleness: true
+  use_sample_weighting: true
+  send_gradients: false
+  server_artificial_delay: false
+  is_streaming: false
+  client_local_delay: false
+
 wb:
   project: autofl-testing
   mode: online
@@ -53,22 +74,4 @@ logging:
   save_server_metrics: true
   append_run_name_to_dir: true
 
-# defaults:
-#   - workload: cifar10  # Choose workload: cifar10, cifar100, bdd100k, kitti
-#   - model: simple_cnn      # Choose model architecture
-#   - _self_
-
-# server:
-#   num_rounds: 10
-#   num_clients: 10
-#   fraction_fit: 0.8
-#   fraction_eval: 0.2
-#   min_fit: 8
-#   min_eval: 2
-
-training:
-  batch_size: 32
-  learning_rate: 0.001
-  # epochs: 5
-  optimizer: adam
 
