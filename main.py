@@ -24,6 +24,7 @@ from utils.latency_simulator import init_runtime_recorder, flush_runtime_recorde
 
 # Import our reorganized modules
 from utils.data_loader import get_data_loaders
+from utils.logger import generate_run_name
 from runners.async_runner import get_async_config, run_async_simulation
 from runners.sync_runner import run_sync_simulation
 
@@ -101,9 +102,10 @@ def main():
     # 2. Initialize WandB
     wandb_enabled = cfg.get("wb", {}).get("mode", "online") != "disabled"
     if wandb_enabled:
+        run_name = generate_run_name{cfg, is_async}
         wandb.init(
             project=cfg.get("wb", {}).get("project", "autofl-async"),
-            name=cfg.get("wb", {}).get("name", "async_run") + f"{mode_suffix}",
+            name=run_name,
             config=OmegaConf.to_container(cfg, resolve=True),
             mode=cfg.get("wb", {}).get("mode", "online"),
         )
