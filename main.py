@@ -113,14 +113,6 @@ def main():
             wandb_enabled
         )
 
-        
-        safe_results = {
-            "final_loss": float(results["final_loss"]),
-            "final_accuracy": float(results["final_accuracy"]),
-            "total_updates" : int(results["total_updates"]),
-            "elapsed_time": float(results["elapsed_time"])
-        }        
-
     else:
        print("\n[Router] Launching Synchronous Simulation...") 
        results = run_sync_simulation(
@@ -134,12 +126,12 @@ def main():
         )
 
 
-        safe_results = {
-            "final_loss": float(results["final_loss"]),
-            "final_accuracy": float(results["final_accuracy"]),
-            "total_updates" : int(results["total_updates"]),
-            "elapsed_time": float(results["elapsed_time"])
-        }        
+    safe_results={
+        "final_loss": float(results["final_loss"]),
+        "final_accuracy": float(results["final_accuracy"]),
+        "total_updates" : int(results["total_updates"]),
+        "elapsed_time": float(results["elapsed_time"])
+    }        
     
     results_path = run_dir / f"{mode_suffix}_results.yaml"
     with open(results_path, "w") as f:
