@@ -127,7 +127,7 @@ def main():
            train_loaders=train_loaders,
            test_loaders=test_loaders,
            global_test_loader=global_test_loader,
-           device=device
+           device=device,
            wandb_enabled=wandb_enabled
        )
 
