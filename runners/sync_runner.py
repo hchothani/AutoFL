@@ -88,10 +88,10 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
         client_resources={"num_cpus": cfg.client.num_cpus, "num_gpus": cfg.client.num_gpus},
-        ray_init_args={
-            "num_cpus":  cfg.get("async", {}).get("max_workers", 4),
-            "num_gpus": 1
-        },
+#        ray_init_args={
+#            "num_cpus":  cfg.get("async", {}).get("max_workers", 4),
+#            "num_gpus": 1
+#        },
     )
     
     total_elapsed = time.time() - start_time

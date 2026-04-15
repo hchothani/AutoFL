@@ -139,7 +139,10 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
         return t_diff
 
     if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True)
+        ray.init(
+                 ignore_reinit_error=True,
+                 include_dashboard=False
+             )
 
     active_tasks = {}
     client_queue = list(range(num_clients))
