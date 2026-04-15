@@ -1,7 +1,15 @@
 import ray
 import sys
 import os
+
+# Comment below if you want Ray Warnings and Logs
 os.environ["RAY_BACKEND_LOG_LEVEL"] = "fatal"
+
+# Patch to ensure padding can be done to datasets -> Caused by old Torch Vesions
+import collections
+import collections.abc
+collections.Sequence = colections.abc.Sequence
+
 import atexit
 from datetime import datetime
 from pathlib import Path
