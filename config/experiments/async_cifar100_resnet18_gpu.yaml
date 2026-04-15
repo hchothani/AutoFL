@@ -13,44 +13,16 @@ dataset:
   workload: cifar100
 
 # server configuration
-server:
-  num_clients: 10
-  num_rounds: 10  # ignored in async mode; uses async.total_train_time instead
-  fraction_fit: 1.0
-  fraction_eval: 1.0
-  min_fit: 2
-  min_eval: 2
-  strategy: fedavg
 
 # client configuration
-client:
-  num_cpus: 2
-  num_gpus: 0.2
-  local_epochs: 2
-  batch_size: 32
-  learning_rate: 0.01
-
+ 
 # cl configuration
-cl:
-  strategy: naive
-  num_experiences: 3
 
 # async fl configuration
 async:
   enabled: true
   total_train_time: 1800  # total training time in seconds
   waiting_interval: 30   # evaluation interval in seconds
-  max_workers: 4         # concurrent client workers
-  aggregation_strategy: fedasync  # fedasync, asyncfeded, or unweighted
-  staleness_alpha: 0.5   # staleness decay parameter
-  fedasync_mixing_alpha: 0.9  # fedasync mixing coefficient
-  fedasync_a: 0.5        # polynomial decay parameter
-  use_staleness: true    # enable staleness-based weighting
-  use_sample_weighing: true  # enable sample-based weighting
-  send_gradients: false  # send full models, not gradients
-  server_artificial_delay: false
-  is_streaming: false
-  client_local_delay: false
 
 # wandb configuration
 wb:

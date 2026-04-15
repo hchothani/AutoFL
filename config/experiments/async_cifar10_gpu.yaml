@@ -18,40 +18,19 @@ server:
   num_rounds: 10  # Ignored in async mode; uses async.total_train_time instead
   fraction_fit: 1.0
   fraction_eval: 1.0
-  min_fit: 2
-  min_eval: 2
+  min_fit: 5
+  min_eval: 5
   strategy: fedavg
 
 # Client configuration
 client:
   num_cpus: 2
   num_gpus: 0.2
-  local_epochs: 2
-  batch_size: 32
-  learning_rate: 0.01
-
-# CL configuration
-cl:
-  strategy: naive
-  num_experiences: 3
+  local_epochs: 3
 
 # Async FL configuration
 async:
   enabled: true
-  total_train_time: 120  # Total training time in seconds
-  waiting_interval: 10   # Evaluation interval in seconds
-  max_workers: 4         # Concurrent client workers
-  aggregation_strategy: fedasync  # fedasync, asyncfeded, or unweighted
-  staleness_alpha: 0.5   # Staleness decay parameter
-  fedasync_mixing_alpha: 0.9  # FedAsync mixing coefficient
-  fedasync_a: 0.5        # Polynomial decay parameter
-  use_staleness: true    # Enable staleness-based weighting
-  use_sample_weighing: true  # Enable sample-based weighting
-  send_gradients: false  # Send full models, not gradients
-  server_artificial_delay: false
-  is_streaming: false
-  client_local_delay: false
-
 # WandB configuration
 wb:
   enabled: true
