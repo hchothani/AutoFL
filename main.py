@@ -131,7 +131,7 @@ def main():
            global_test_loader=global_test_loader,
            device=device,
            wandb_enabled=wandb_enabled
-       )
+        )
 
 
         safe_results = {
