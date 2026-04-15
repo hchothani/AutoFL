@@ -158,6 +158,9 @@ def main():
         print(f"\\nResults saved to: {results_path}")
 
     flush_runtime_recorder()
+    if ray.is_initialized():
+        print("\n[Cleanup] Shutting down Ray cluster")
+        ray.shutdown()
     if wandb_enabled:
         wandb.finish()
     if os.path.exists("temp_config.yaml"):
