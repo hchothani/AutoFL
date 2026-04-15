@@ -1,6 +1,5 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
-import ray
 from threading import Lock
 from typing import Any, Dict, List
 import numpy as np
@@ -12,12 +11,6 @@ import wandb
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
-
-@ray_remote
-def execute_ray_client(client_idx: int, client, params, start_timestamp) -> tuple:
-    from flwr.common import FitIns
-    config = {"start_timestamp": _time.time()}
-    return client_idx, client.fit(FitIns(parameters=params, config=config))
 
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     """Extract async configuration from the config."""
@@ -122,13 +115,13 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     end_time = start_time + total_train_time
     update_count = 0
 
-#    def train_client(client_idx: int) -> tuple:
-#        from flwr.common import FitIns
-#        client = clients[client_idx]
-#        with param_lock:
-#            params = current_params
-#        config = {"start_timestamp": time.time()}
-#        return client_idx, client.fit(FitIns(parameters=params, config=config))
+    def train_client(client_idx: int) -> tuple:
+        from flwr.common import FitIns
+        client = clients[client_idx]
+        with param_lock:
+            params = current_params
+        config = {"start_timestamp": time.time()}
+        return client_idx, client.fit(FitIns(parameters=params, config=config))
 
     def aggregate_result(client_idx: int, fit_res):
         nonlocal current_params, update_count
@@ -138,57 +131,28 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             update_count += 1
         return t_diff
 
-    if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True)
-
-    active_tasks = {}
-    client_queue = list(range(num_clients))
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    active_futures, client_queue = set(), list(range(num_clients))
     eval_counter, last_eval_time = 0, start_time
 
-    # Spawn Initial Batch of Clients
     for _ in range(min(max_workers, num_clients)):
         if client_queue:
             client_idx = client_queue.pop(0)
-            with param_lock:
-                params = current_params
-
-            task = execute_ray_client.options(
-                num_cpus=cfg.client.num_cpus,
-                num_gpus=cfg.client.num_gpus
-            ).remote(client_idx, clients[client_idx], params, time.time())
-
-            active_tasks[task] = client_idx
-
-
-#    executor = ThreadPoolExecutor(max_workers=max_workers)
-#    active_futures, client_queue = set(), list(range(num_clients))
-#    eval_counter, last_eval_time = 0, start_time
-
-#    for _ in range(min(max_workers, num_clients)):
-#        if client_queue:
-#            client_idx = client_queue.pop(0)
-#            active_futures.add((executor.submit(train_client, client_idx), client_idx))
+            active_futures.add((executor.submit(train_client, client_idx), client_idx))
 
     while time.time() < end_time and (active_futures or client_queue):
-#        completed = [(f, c) for f, c in list(active_futures) if f.done()]
-        ready_tasks, _ = ray.wait(list(active_tasks.keys()), num_returns=1, timeout=0.1) 
-        for task in ready_tasks:
-            client_idx = active_tasks.pop(task)
+        completed = [(f, c) for f, c in list(active_futures) if f.done()]
+        for future, client_idx in completed:
+            active_futures.discard((future, client_idx))
             try:
-                returned_client_idx, fit_res = ray.get(task)
-                t_diff = aggregate_result(returned_client_idx, fit_res)
+                _, fit_res = future.result()
+                t_diff = aggregate_result(client_idx, fit_res)
                 print(f"[t={time.time() - start_time:.1f}s] Client {client_idx} completed (loss: {fit_res.metrics.get('loss', 0):.4f})")
             except Exception as e:
-                print(f"[Error] Client {client_idx} failed: {e}")
+                pass
             
             if time.time() < end_time:
-                with param_lock:
-                    params = current_params
-                new_task = execute_ray_client.options(
-                    num_cpus=cfg.client.num_cpus,
-                    num_gpus=cfg.client.num_gpus
-                ).remote(client_idx, clients[client_idx], params, time.time())
-                active_tasks[new_task] = client_idx
+                active_futures.add((executor.submit(train_client, client_idx), client_idx))
 
         if time.time() - last_eval_time >= waiting_interval:
             eval_counter += 1
@@ -200,9 +164,10 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             if wandb_enabled:
                 wandb.log({"async/loss": loss, "async/accuracy": acc, "async/updates": update_count, "async/elapsed_time": time.time() - start_time}, step=eval_counter)
             last_eval_time = time.time()
+        time.sleep(0.1)
 
-    ray.shutdown()    
-
+    executor.shutdown(wait=True)
+    
     with param_lock:
         final_params = parameters_to_ndarrays(current_params)
     final_loss, final_acc = evaluate_global_model(global_model, final_params, global_test_loader, device)
