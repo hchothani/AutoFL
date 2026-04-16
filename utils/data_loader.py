@@ -1,13 +1,55 @@
 # utils/data_loader.py
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
+import numpy as np
 
 # Import the dynamic router
 from workloads import load_workload
 
+def partition_niid(dataset, num_clients: int, num_classes: int, alpha: float):
+    """Distributes dataset indices to clients using a Dirichlet Distribution to simulate stastical heterogenity (Non-IID)."""
+    # Extract labels regardless of the torchvision dataset type
+    if hasattr(dataset, 'targets'):
+        labels = np.array(dataset.targets)
+    elif hasattr(dataset, 'labels'):
+        labels = np.array(dataset.labels)
+    else:
+        # Fallback
+        labels = np.array([dataset[i][1] for i in range(len(dataset))])
+    client_indices = {i : [] for i in range(num_clients)}
+
+    # Iterate through each class and distribute its samples across clients
+    for k in range(num_classes):
+        idx_k = np.where(labels == k)[0]
+        np.random.shuffle(idx_k)
+
+        # Sample proportions from the Dirichlet Distribution
+        proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
+
+        # Convert proportions to index boundaries
+        proportions = np.cumsum(proportions)*len(idx_k)
+        splits = proportions.astype(int)[:-1]
+
+        # Split Class indices and assign them to clients
+        idx_k_split = np.split(idx_k, splits)
+        for i in range(num_clients):
+            client_indices[i].extend(idx_k_split[i].tolist())
+
+    # Shuffle each client's assigned indices so batches aren't strictly grouped by class
+    for i in range(num_clients):
+        np.random.shuffle(client_indices[i])
+
+    return [Subset(dataset, client_indices[i]) for i in range(num_clients)]
+
+def partition_iid(dataset, num_clients: int):
+    """Standard IID Partitioning """
+    total_size = len(dataset)
+    base_size = total_size // num_clients
+    remainder = total_size % num_
+    return random_split(dataset, lenghts, generator=torch.Generator().manual_seed(42))
+
 def partition_dataset(dataset, num_clients: int, partition_type: str = "iid"):
     """Split the global dataset into smaller chunks for each vehicle/client."""
-    total_size = len(dataset)
     
     if partition_type == "iid":
         base_size = total_size // num_clients
