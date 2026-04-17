@@ -96,11 +96,12 @@ def get_data_loaders(cfg, num_clients: int):
     num_classes = metadata["num_classes"]
 
     cl_enabled = cfg.get("cl", {}).get("enabled", False)
-    num_phases = cfg.get("cl", {}).get("num_phases", 1) if cl_enabled else 1
+    num_phases = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
     
     # 1. Split temporally into phases
     train_phases, phase_classes_list = split_dataset_by_phase(global_train_dataset, num_phases, num_classes)
     test_phases, _ = split_dataset_by_phase(global_test_dataset, num_phases, num_classes)
+    print(f"[Dataset] successfully split Dataset into Phases: {num_phases}")
 
     client_train_loaders = [[] for _ in range(num_clients)]
     client_test_loaders = [[] for _ in range(num_clients)]

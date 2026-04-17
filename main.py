@@ -74,7 +74,7 @@ def main():
 
     cl_enabled = cfg.get("cl", {}).get("enabled", False)
     if cl_enabled:
-        num_phases = cfg.get("cl", {}).get("num_phases", 1)
+        num_phases = cfg.get("cl", {}).get("num_experiences", 1)
         print(f"\n[Continual Learning] ENABLED: Operating in Phase-Wise FCL Mode ({num_phases})")
     else:
         print(f"\n[Continual Learning] DISABLED: Operating in standard Static FL mode. SINGULAR PHASE")

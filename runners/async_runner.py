@@ -27,7 +27,7 @@ class AsyncRayClientActor:
         from flwr.common import FitIns
         config = {"start_timestamp": start_timestamp, "current_phase": current_phase}
         fit_res = self.client.fit(FitIns(parameters=params, config=config))
-        return self.client_idx, fit_res
+        return self.client_idx, fit_res, current_phase
 
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     async_cfg = cfg.get("async", {})
