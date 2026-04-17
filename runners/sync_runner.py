@@ -48,7 +48,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         
         for phase_idx, phase_loader in enumerate(global_test_loaders):
             with torch.no_grad():
-                for batch in global_test_loaders:
+                for batch in phase_loader:
                     if isinstance(batch, dict):
                         images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
                     else:
