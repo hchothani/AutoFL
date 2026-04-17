@@ -48,18 +48,16 @@ def partition_iid(dataset, num_clients: int):
     remainder = total_size % num_
     return random_split(dataset, lenghts, generator=torch.Generator().manual_seed(42))
 
-def partition_dataset(dataset, num_clients: int, partition_type: str = "iid"):
+def partition_dataset(dataset, num_clients: int, partition_type: str = "iid", alpha: float):
     """Split the global dataset into smaller chunks for each vehicle/client."""
     
     if partition_type == "iid":
-        base_size = total_size // num_clients
-        remainder = total_size % num_clients
-        lengths = [base_size + 1 if i < remainder else base_size for i in range(num_clients)]
-        return random_split(dataset, lengths, generator=torch.Generator().manual_seed(42))
+        print(f"[Dataset] Partitioning IID..")
+        return partition_iid(dataset, num_clients)
         
-    elif partition_type == "non_iid_dirichlet":
-        # Future implementation for data heterogeneity
-        raise NotImplementedError("Dirichlet non-IID partitioning coming soon.")
+    elif partition_type in ["dirichlet", "non_iid", "niid"]:
+        print(f"[Dataset] Partitioning NIID (Dirichlet alpha = {alpha})")
+        return partition_niid(dataset, num_clients, alpha)
     else:
         raise ValueError(f"Partition type '{partition_type}' is not supported.")
 
@@ -73,6 +71,7 @@ def get_data_loaders(cfg, num_clients: int):
     data_dir = cfg.dataset.get("data_dir", "./data")
     batch_size = cfg.client.batch_size
     partition_type = cfg.dataset.get("split", "iid")
+    alpha = cfg.dataset.get("alpha", 0.5)
 
     # 1. Ask the Workload Router for the raw datasets
     global_train_dataset, global_test_dataset, metadata = load_workload(workload_name, data_dir)
