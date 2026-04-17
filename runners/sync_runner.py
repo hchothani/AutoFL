@@ -47,6 +47,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         phases_accuracies = []
         
         for phase_idx, phase_loader in enumerate(global_test_loaders):
+            phase_loss, correct, total = 0.0, 0, 0
             with torch.no_grad():
                 for batch in phase_loader:
                     if isinstance(batch, dict):
