@@ -232,7 +232,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 
             # CL Math for Metrics
             phase_accuracies = [metrics_dict[f"phase_{i}_accuracy"] for i in range(num_phases)]
-            seen_phase.add(current_global_phase)
+            seen_phases.add(current_global_phase)
             phase_max_accs[current_global_phase] = max(phase_max_accs[current_global_phase], phase_accuracies[current_global_phase])
             bwt, fwt = 0.0, 0.0
             if current_global_phase > 0:
