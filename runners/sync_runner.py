@@ -65,7 +65,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
             phase_accuracy = correct / max(total, 1)
             phase_accuracies.append(phase_accuracy)
             total_phases_loss += phase_loss / max(total, 1)
-            metrics[f"phase_{phase_idx}_accuracy"] = phase_accuracy
+            metrics_dict[f"phase_{phase_idx}_accuracy"] = phase_accuracy
 
         avg_loss = total_phases_loss / max(total, 1)
         avg_accuracy = total_correct / max(total, 1)
