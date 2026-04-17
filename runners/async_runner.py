@@ -247,7 +247,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             metrics_dict["avg_seen_acc"] = avg_seen_acc
 
             acc = metrics_dict["accuracy"]
-            print(f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}\n")
+            print(f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}, BWT: {bwt:.4f}, FWT: {fwt:.4f}\n")
             
             if wandb_enabled:
                 log_dict = {
@@ -266,11 +266,11 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 
     with param_lock:
         final_params = parameters_to_ndarrays(current_params)
-    final_loss, final_acc = evaluate_global_model(global_model, final_params, global_test_loaders, device)
+    final_loss, final_metrics = evaluate_global_model(global_model, final_params, global_test_loaders, device)
 
     return {
         "final_loss": final_loss,
-        "final_accuracy": final_acc,
+        "final_accuracy": final_metrics.get("accuracy"),
         "total_updates": update_count,
         "elapsed_time": time.time() - start_time,
     }
