@@ -95,7 +95,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         
         elapsed_time = time.time() - start_time
         
-        print(f"[Phase: {current_phase}][Round {server_round} | {elapsed_time:.1f}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+        print(f"[Phase: {current_phase}][Round {server_round} | {elapsed_time:.1f}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {avg_accuracy:.4f}")
         
         if wandb_enabled:
             log_dict = {
