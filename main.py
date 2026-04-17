@@ -103,6 +103,7 @@ def main(cfg: DictConfig):
         else:
             wandb_cfg = {}
         wandb.init(
+            entity=cfg.wb.entity,
             project=cfg.wb.project,
             name=run_name,
             config=wandb_cfg,

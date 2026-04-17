@@ -145,6 +145,7 @@ class LatencyConfig:
 
 @dataclass
 class WbConfig:
+    entity: str = "dashlab"
     project: str = "autofl-testing"
     mode: str = "online"
     run_name_keys: List[str] = field(
