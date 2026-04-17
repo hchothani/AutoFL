@@ -245,7 +245,8 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             metrics_dict["bwt"] = bwt
             metrics_dict["fwt"] = fwt
             metrics_dict["avg_seen_acc"] = avg_seen_acc
-            
+
+            acc = metrics_dict["accuracy"]
             print(f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}\n")
             
             if wandb_enabled:
