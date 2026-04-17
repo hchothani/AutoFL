@@ -74,7 +74,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
             for p in range(num_phases):
                 initial_phase_acc[p] = phase_accuracies[p]
         seen_phases.add(current_phase) 
-        phase_max_accs[current_phase] = max()
+        phase_max_accs[current_phase] = max(phase_max_accs[current_phase], phase_accuracies[current_phase])
 
         bwt, fwt = 0.0, 0.0
         
