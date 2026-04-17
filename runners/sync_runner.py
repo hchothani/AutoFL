@@ -31,7 +31,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         state_dict = {k: torch.tensor(v) for k, v in params_dict}
         model.load_state_dict(state_dict, strict=True)
 
-        current_phase = config.get("current_phase", 0)
+        current_phase = min((server_round - 1) // rounds_per_phase, num_phases - 1)
         
         model.eval()
         criterion = torch.nn.CrossEntropyLoss()
