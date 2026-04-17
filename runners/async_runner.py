@@ -252,7 +252,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             if wandb_enabled:
                 log_dict = {
                     "async/loss": loss,
-                    "async/accuracy": acc
+                    "async/accuracy": acc,
                     "async/updates": update_count,
                     "async/elapsed_time": time.time() - start_time
                 }
