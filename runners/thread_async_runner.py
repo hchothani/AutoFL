@@ -12,6 +12,7 @@ from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
 
+
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     """Extract async configuration from the config."""
     async_cfg = cfg.get("async", {})
@@ -36,7 +37,13 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
         "max_delay": async_cfg.get("max_delay", 3.0),
     }
 
-def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test_loader: DataLoader, device: torch.device) -> tuple[float, float]:
+
+def evaluate_global_model(
+    model: torch.nn.Module,
+    params: List[np.ndarray],
+    test_loader: DataLoader,
+    device: torch.device,
+) -> tuple[float, float]:
     """Evaluate model with given parameters."""
     state_dict = model.state_dict()
     for key, param in zip(state_dict.keys(), params):
@@ -50,7 +57,9 @@ def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test
     with torch.no_grad():
         for batch in test_loader:
             if isinstance(batch, dict):
-                images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
+                images, labels = batch.get("img", batch.get("x")).to(device), batch.get(
+                    "label", batch.get("y")
+                ).to(device)
             elif isinstance(batch, (tuple, list)):
                 images, labels = batch[0].to(device), batch[1].to(device)
             else:
@@ -65,7 +74,17 @@ def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test
 
     return total_loss / max(total, 1), correct / max(total, 1)
 
-def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, global_test_loader, device, wandb_enabled):
+
+def run_async_simulation(
+    cfg,
+    async_cfg,
+    model_fn,
+    train_loaders,
+    test_loaders,
+    global_test_loader,
+    device,
+    wandb_enabled,
+):
     """Run async FL simulation exactly as originally written."""
     num_clients = len(train_loaders)
 
@@ -106,10 +125,20 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     waiting_interval = async_cfg["waiting_interval"]
     max_workers = async_cfg["max_workers"]
 
-    initial_loss, initial_acc = evaluate_global_model(global_model, global_params, global_test_loader, device)
-    
+    initial_loss, initial_acc = evaluate_global_model(
+        global_model, global_params, global_test_loader, device
+    )
+
     if wandb_enabled:
-        wandb.log({"async/loss": initial_loss, "async/accuracy": initial_acc, "async/updates": 0, "async/elapsed_time": 0.0}, step=0)
+        wandb.log(
+            {
+                "async/loss": initial_loss,
+                "async/accuracy": initial_acc,
+                "async/updates": 0,
+                "async/elapsed_time": 0.0,
+            },
+            step=0,
+        )
 
     start_time = time.time()
     end_time = start_time + total_train_time
@@ -117,6 +146,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 
     def train_client(client_idx: int) -> tuple:
         from flwr.common import FitIns
+
         client = clients[client_idx]
         with param_lock:
             params = current_params
@@ -127,7 +157,9 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
         nonlocal current_params, update_count
         t_diff = time.time() - fit_res.metrics.get("start_timestamp", time.time())
         with param_lock:
-            current_params = async_strategy.average(current_params, fit_res.parameters, t_diff, fit_res.num_examples)
+            current_params = async_strategy.average(
+                current_params, fit_res.parameters, t_diff, fit_res.num_examples
+            )
             update_count += 1
         return t_diff
 
@@ -147,30 +179,48 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             try:
                 _, fit_res = future.result()
                 t_diff = aggregate_result(client_idx, fit_res)
-                print(f"[t={time.time() - start_time:.1f}s] Client {client_idx} completed (loss: {fit_res.metrics.get('loss', 0):.4f})")
+                print(
+                    f"[t={time.time() - start_time:.1f}s] Client {client_idx} completed (loss: {fit_res.metrics.get('loss', 0):.4f})"
+                )
             except Exception as e:
                 pass
-            
+
             if time.time() < end_time:
-                active_futures.add((executor.submit(train_client, client_idx), client_idx))
+                active_futures.add(
+                    (executor.submit(train_client, client_idx), client_idx)
+                )
 
         if time.time() - last_eval_time >= waiting_interval:
             eval_counter += 1
             with param_lock:
                 eval_params = parameters_to_ndarrays(current_params)
-            loss, acc = evaluate_global_model(global_model, eval_params, global_test_loader, device)
-            print(f"\\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}\\n")
-            
+            loss, acc = evaluate_global_model(
+                global_model, eval_params, global_test_loader, device
+            )
+            print(
+                f"\\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}\\n"
+            )
+
             if wandb_enabled:
-                wandb.log({"async/loss": loss, "async/accuracy": acc, "async/updates": update_count, "async/elapsed_time": time.time() - start_time}, step=eval_counter)
+                wandb.log(
+                    {
+                        "async/loss": loss,
+                        "async/accuracy": acc,
+                        "async/updates": update_count,
+                        "async/elapsed_time": time.time() - start_time,
+                    },
+                    step=eval_counter,
+                )
             last_eval_time = time.time()
         time.sleep(0.1)
 
     executor.shutdown(wait=True)
-    
+
     with param_lock:
         final_params = parameters_to_ndarrays(current_params)
-    final_loss, final_acc = evaluate_global_model(global_model, final_params, global_test_loader, device)
+    final_loss, final_acc = evaluate_global_model(
+        global_model, final_params, global_test_loader, device
+    )
 
     return {
         "final_loss": final_loss,

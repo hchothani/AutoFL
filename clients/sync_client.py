@@ -8,9 +8,10 @@ import torch.optim as optim
 from typing import Dict, List, Tuple
 import numpy as np
 
+
 class SyncSimulatedClient(fl.client.NumPyClient):
     """A clean, standard synchronous Flower client."""
-    
+
     def __init__(self, cid: str, model_fn, train_loader, test_loader, device, cfg):
         self.cid = cid
         self.model = model_fn().to(device)
@@ -34,21 +35,23 @@ class SyncSimulatedClient(fl.client.NumPyClient):
         state_dict = {k: torch.tensor(v) for k, v in params_dict}
         self.model.load_state_dict(state_dict, strict=True)
 
-    def fit(self, parameters: List[np.ndarray], config: Dict) -> Tuple[List[np.ndarray], int, Dict]:
+    def fit(
+        self, parameters: List[np.ndarray], config: Dict
+    ) -> Tuple[List[np.ndarray], int, Dict]:
         """Perform local training on the client's standard dataloader."""
         # Simulating Download
         if self.simulate_delay:
-            download_delay = random.uniform(self.min_delay/2.0, self.max_delay/2.0)
+            download_delay = random.uniform(self.min_delay / 2.0, self.max_delay / 2.0)
             time.sleep(download_delay)
         self.set_parameters(parameters)
         self.model.train()
-        
+
         optimizer = optim.SGD(self.model.parameters(), lr=self.cfg.client.learning_rate)
         criterion = nn.CrossEntropyLoss()
-        
+
         total_loss = 0.0
         num_examples = len(self.train_loader.dataset)
-        
+
         for _ in range(self.cfg.client.local_epochs):
             for batch in self.train_loader:
                 # Handle both flwr_datasets (dict) and standard PyTorch (tuple) batch structures
@@ -64,37 +67,43 @@ class SyncSimulatedClient(fl.client.NumPyClient):
                 optimizer.step()
                 total_loss += loss.item()
 
-        avg_loss = total_loss / max(1, len(self.train_loader) * self.cfg.client.local_epochs)
+        avg_loss = total_loss / max(
+            1, len(self.train_loader) * self.cfg.client.local_epochs
+        )
 
         # Simulate Upload Delay
         if self.simulate_delay:
-            upload_delay = random.uniform(self.min_delay/2.0, self.max_delay /2.0)
+            upload_delay = random.uniform(self.min_delay / 2.0, self.max_delay / 2.0)
             time.sleep(upload_delay)
-        
+
         # Return updated weights, number of local samples, and metrics
         return self.get_parameters(config={}), num_examples, {"loss": avg_loss}
 
-    def evaluate(self, parameters: List[np.ndarray], config: Dict) -> Tuple[float, int, Dict]:
+    def evaluate(
+        self, parameters: List[np.ndarray], config: Dict
+    ) -> Tuple[float, int, Dict]:
         """Perform local federated evaluation."""
         self.set_parameters(parameters)
         self.model.eval()
         criterion = nn.CrossEntropyLoss()
-        
+
         num_examples = len(self.test_loader.dataset)
         total_loss, correct = 0.0, 0
-        
+
         with torch.no_grad():
             for batch in self.test_loader:
                 if isinstance(batch, dict):
-                    images, labels = batch.get("img", batch.get("x")).to(self.device), batch.get("label", batch.get("y")).to(self.device)
+                    images, labels = batch.get("img", batch.get("x")).to(
+                        self.device
+                    ), batch.get("label", batch.get("y")).to(self.device)
                 else:
                     images, labels = batch[0].to(self.device), batch[1].to(self.device)
-                    
+
                 outputs = self.model(images)
                 total_loss += criterion(outputs, labels).item() * labels.size(0)
                 correct += outputs.max(1)[1].eq(labels).sum().item()
 
         avg_loss = float(total_loss / max(1, num_examples))
         accuracy = float(correct / max(1, num_examples))
-        
+
         return avg_loss, num_examples, {"accuracy": accuracy}
