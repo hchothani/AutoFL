@@ -156,7 +156,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
     
     # 5. Extract Final Metrics
     final_loss = history.losses_centralized[-1][1] if history.losses_centralized else 0.0
-    final_acc = history.metrics_centralized.get("accuracy", [(0, 0.0)])[-1][1] if history.metrics_centralized else 0.0
+    final_acc = history.metrics_centralized.get("sync/accuracy", [(0, 0.0)])[-1][1] if history.metrics_centralized else 0.0
 
     return {
         "final_loss": final_loss,
