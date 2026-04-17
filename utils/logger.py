@@ -27,7 +27,7 @@ def generate_run_name(cfg: DictConfig, is_async: bool) -> str:
         # Format Boolean flags beautifully (e.g., delay: True -> "delay", False -> "nodelay")
         if val in ["true", "false"]:
             flag_name = key.split('.')[-1] # Grabs just the word 'delay'
-            parts.append(flag_name if val else f"no_{flag_name}")
+            parts.append(flag_name if val == "true" else f"no_{flag_name}")
             
         # Format Standard Strings/Numbers
         elif str(val).lower() != "none":
