@@ -148,7 +148,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     seen_phases = set()
     current_global_phase = 0
     initial_loss, initial_metrics = evaluate_global_model(global_model, global_params, global_test_loaders, device)
-    initial_phase_acc = [initial_metrics[f"phase{i}_accuracy"] for i in range(num_phases)] 
+    initial_phase_acc = [initial_metrics[f"phase_{i}_accuracy"] for i in range(num_phases)] 
     
     if wandb_enabled:
         log_dict = {
