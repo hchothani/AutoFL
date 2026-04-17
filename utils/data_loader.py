@@ -45,7 +45,7 @@ def partition_iid(dataset, num_clients: int):
     """Standard IID Partitioning """
     total_size = len(dataset)
     base_size = total_size // num_clients
-    remainder = total_size % num_
+    remainder = total_size % num_clients
     return random_split(dataset, lenghts, generator=torch.Generator().manual_seed(42))
 
 def partition_dataset(dataset, num_clients: int, num_classes: int, partition_type: str = "iid", alpha: float = 0.5):
