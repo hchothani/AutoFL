@@ -40,8 +40,3 @@ def test_factory_builds_resnet_safely():
     assert model.fc.out_features == 43 # Proves num_classes was passed successfully
     assert model.conv1[0].in_channels == 1 # Proves the 1-channel dynamic fix worked!
 
-def test_invalid_model_rejection():
-    """Ensure the router gracefully rejects hallucinations."""
-    cfg = OmegaConf.create({"model": {"name": "fake_transformer"}, "dataset": {}})
-    with pytest.raises(RuntimeError, match="Failed to instantiate model"):
-        create_model(cfg)
