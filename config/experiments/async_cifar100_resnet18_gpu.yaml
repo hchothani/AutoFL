@@ -1,31 +1,16 @@
-# Async CIFAR100 with GPU - ResNet18 async FL configuration
+# @package _global_
 defaults:
-  - ../config
+  - override /runtime: async
+  - override /model: resnet18
+  - _self_
 
-# model configuration
-model:
-  name: resnet  # this maps to the repo's ResNet18 implementation
-  num_classes: 100
-  pretrained: false
-
-# dataset configuration
 dataset:
   workload: cifar100
 
-# server configuration
-
-# client configuration
- 
-# cl configuration
-
-# async fl configuration
 async:
-  enabled: true
-  total_train_time: 1800  # total training time in seconds
-  waiting_interval: 30   # evaluation interval in seconds
+  total_train_time: 1800
+  waiting_interval: 30
 
-# wandb configuration
 wb:
-  enabled: true
-  name: async_cifar100_resnet18_test
+  mode: online
   project: autofl-async

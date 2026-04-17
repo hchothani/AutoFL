@@ -12,6 +12,7 @@ import torch
 import wandb
 
 from clients.sync_client import SyncSimulatedClient
+from runners.strategy_factory import build_server_strategy
 
 
 def run_sync_simulation(
@@ -84,12 +85,7 @@ def run_sync_simulation(
         return avg_loss, {"accuracy": accuracy, "elapsed_time": elapsed_time}
 
     # 2. Strategy Initialization
-    strategy = fl.server.strategy.FedAvg(
-        fraction_fit=cfg.server.fraction_fit,
-        min_fit_clients=cfg.server.min_fit,
-        min_available_clients=num_clients,
-        evaluate_fn=evaluate_fn,
-    )
+    strategy = build_server_strategy(cfg, num_clients, evaluate_fn)
 
     # 3. Client Factory (Spins up clients on demand)
     def client_fn(cid: str) -> fl.client.Client:

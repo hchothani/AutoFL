@@ -10,24 +10,24 @@ def generate_run_name(cfg: DictConfig, is_async: bool) -> str:
     """
     parts = []
 
-    # 1. Inject runtime variables dynamically into the config
-    # This allows us to track things not explicitly in the YAML
     mode_str = "async" if is_async else "sync"
-    OmegaConf.update(cfg, "server.mode", mode_str, force_add=True)
 
-    # 2. Extract the requested keys
-    keys_to_track = cfg.get("wb", {}).get("run_name_keys", [])
+    # 1. Extract the requested keys
+    keys_to_track = cfg.wb.run_name_keys
 
     for key in keys_to_track:
-        val = OmegaConf.select(cfg, key)
+        if key == "runtime.mode":
+            val = mode_str
+        else:
+            val = OmegaConf.select(cfg, key)
 
         if val is None:
             continue
 
         # Format Boolean flags beautifully (e.g., delay: True -> "delay", False -> "nodelay")
-        if val in ["true", "false"]:
+        if isinstance(val, bool):
             flag_name = key.split(".")[-1]  # Grabs just the word 'delay'
-            parts.append(flag_name if val == "true" else f"no_{flag_name}")
+            parts.append(flag_name if val else f"no_{flag_name}")
 
         # Format Standard Strings/Numbers
         elif str(val).lower() != "none":

@@ -1,5 +1,4 @@
 import ray
-import sys
 import os
 
 # Comment below if you want Ray Warnings and Logs
@@ -14,12 +13,15 @@ collections.Sequence = collections.abc.Sequence
 import atexit
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict
 import warnings
 import torch
 import wandb
-from omegaconf import OmegaConf
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 # Local imports
+from utils.config_schema import apply_structured_schema
 from utils.model_factory import validate_config, get_model_fn
 from utils.latency_simulator import init_runtime_recorder, flush_runtime_recorder
 from utils.data_loader import get_data_loaders
@@ -30,36 +32,19 @@ from runners.sync_runner import run_sync_simulation
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-def load_cfg():
-    """Load configuration from base and experiment configs."""
-    base_cfg = OmegaConf.load("config/config.yaml")
-    exp_cfg = None
-    if "--config-path" in sys.argv and "--config-name" in sys.argv:
-        cfg_path = sys.argv[sys.argv.index("--config-path") + 1]
-        cfg_name = sys.argv[sys.argv.index("--config-name") + 1]
-        candidate = os.path.join(cfg_path, f"{cfg_name}.yaml")
-        if os.path.isfile(candidate):
-            exp_cfg = OmegaConf.load(candidate)
-            if "defaults" in exp_cfg:
-                del exp_cfg["defaults"]
-        else:
-            print(f"[Config] File {candidate} not found. Using base config.")
-
-    cfg = OmegaConf.merge(base_cfg, exp_cfg) if exp_cfg else base_cfg
-    return cfg
-
-
-def resolve_runtime_mode(cfg) -> str:
-    """Resolve runtime mode with backward-compatible fallback."""
-    runtime_mode = str(cfg.get("runtime", {}).get("mode", "")).strip().lower()
-    if runtime_mode in {"sync", "async"}:
-        return runtime_mode
-    return "async" if cfg.get("async", {}).get("enabled", False) else "sync"
+def resolve_runtime_mode(cfg: DictConfig) -> str:
+    """Resolve runtime mode using Hydra-composed runtime group."""
+    runtime_mode = str(cfg.runtime.mode).strip().lower()
+    if runtime_mode not in {"sync", "async"}:
+        raise ValueError(
+            f"Invalid runtime.mode '{runtime_mode}'. Expected one of: sync, async"
+        )
+    return runtime_mode
 
 
 def prepare_run_directory(cfg, runtime_mode: str) -> Path:
     """Prepare output directory for the run."""
-    output_root = Path(cfg.get("logging", {}).get("output_root", "outputs"))
+    output_root = Path(cfg.logging.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
     mode_suffix = runtime_mode
@@ -71,12 +56,13 @@ def prepare_run_directory(cfg, runtime_mode: str) -> Path:
     return run_dir
 
 
-def main():
+@hydra.main(version_base=None, config_path="config", config_name="config")
+def main(cfg: DictConfig):
     print("=" * 60)
     print("AutoFL: Federated Learning Simulation")
     print("=" * 60)
 
-    cfg = load_cfg()
+    cfg = apply_structured_schema(cfg)
     print("Configuration Loaded:\n" + OmegaConf.to_yaml(cfg))
     validate_config(cfg)
 
@@ -89,13 +75,10 @@ def main():
     init_runtime_recorder(cfg)
     atexit.register(flush_runtime_recorder)
 
-    with open("temp_config.yaml", "w") as f:
-        OmegaConf.save(cfg, f)
-
     # Using Ray for homogenous bottlenecks across sync and async
     ray_init_args = {"ignore_reinit_error": True, "include_dashboard": False}
 
-    max_concurrency = cfg.client.get("max_concurrency")
+    max_concurrency = cfg.client.max_concurrency
     if max_concurrency is not None:
         total_cpus = max_concurrency * cfg.client.num_cpus
         total_gpus = max_concurrency * cfg.client.num_gpus
@@ -111,16 +94,24 @@ def main():
         ray.init(**ray_init_args)
 
     # 2. Initialize WandB
-    wandb_enabled = cfg.get("wb", {}).get("mode", "online") != "disabled"
+    wandb_enabled = cfg.wb.mode != "disabled"
     if wandb_enabled:
         run_name = generate_run_name(cfg, is_async)
+        raw_wandb_cfg = OmegaConf.to_container(cfg, resolve=True)
+        if isinstance(raw_wandb_cfg, dict):
+            wandb_cfg: Dict[str, Any] = {str(k): v for k, v in raw_wandb_cfg.items()}
+        else:
+            wandb_cfg = {}
         wandb.init(
-            project=cfg.get("wb", {}).get("project", "autofl-async"),
+            project=cfg.wb.project,
             name=run_name,
-            config=OmegaConf.to_container(cfg, resolve=True),
-            mode=cfg.get("wb", {}).get("mode", "online"),
+            config=wandb_cfg,
+            mode=cfg.wb.mode,
         )
-        print(f"[WandB] Initialized: {wandb.run.name}")
+        if wandb.run is not None:
+            print(f"[WandB] Initialized: {wandb.run.name}")
+        else:
+            print("[WandB] Initialized")
     else:
         print("[WandB] Disabled")
 
@@ -200,9 +191,7 @@ def main():
         ray.shutdown()
     if wandb_enabled:
         wandb.finish()
-    if os.path.exists("temp_config.yaml"):
-        os.remove("temp_config.yaml")
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[call-arg]

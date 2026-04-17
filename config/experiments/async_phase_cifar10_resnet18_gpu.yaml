@@ -1,15 +1,8 @@
-# Async phase-adaptive FL for CIFAR-10 with ResNet18
-# Run:
-#   python mclmain_async.py --config-path config/experiments --config-name async_phase_cifar10_resnet18_gpu
-
+# @package _global_
 defaults:
-  - ../config
-
-model:
-  name: resnet18
-  arch: resnet18
-  num_classes: 10
-  pretrained: false
+  - override /runtime: async
+  - override /model: resnet18
+  - _self_
 
 dataset:
   workload: cifar10
@@ -31,7 +24,6 @@ client:
   learning_rate: 0.01
 
 async:
-  enabled: true
   total_train_time: 1200
   waiting_interval: 30
   max_workers: 4
@@ -48,19 +40,15 @@ async:
   simulate_delay: true
   min_delay: 0.5
   max_delay: 3.0
-
   phase_adaptation:
     enabled: true
     num_phases: 4
     phase_names: [morning, midday, evening, night]
     phase_weights: [0.25, 0.25, 0.25, 0.25]
-    # Head-level phase adapter: treat classifier params as fast-adapting phase params.
     adapter_param_patterns: ["model.fc"]
-    # Two-timescale learning: backbone slow, phase head faster.
     backbone_learning_rate: 0.001
     adapter_learning_rate: 0.01
 
 wb:
-  enabled: true
-  name: async_phase_cifar10_resnet18
+  mode: online
   project: autofl-async-phase

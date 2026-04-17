@@ -1,0 +1,3 @@
+name: mobilenet_v3_large
+version: v3_large
+pretrained: false

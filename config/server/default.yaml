@@ -1,39 +1,32 @@
-# server configuration for federated learning
-num_rounds: 5
+num_rounds: 10
 num_clients: 5
-fraction_fit: 1.0  # fraction of clients to sample for training
-fraction_eval: 1.0  # fraction of clients to sample for evaluation
-min_fit: 5  # minimum clients for training round
-min_eval: 5  # minimum clients for evaluation round
+fraction_fit: 1.0
+fraction_eval: 1.0
+min_fit: 5
+min_eval: 5
+strategy: fedavg
 
-# federated learning strategy
-strategy: fedavg  # fedavg, fedprox, scaffold, fednova, fedopt
-
-# strategy-specific parameters
 fedprox:
-  mu: 0.01  # proximal term weight (0.01-1.0)
-  
+  mu: 0.01
+
 scaffold:
-  eta_l: 1.0  # local learning rate multiplier
-  eta_g: 1.0  # global learning rate multiplier
-  
+  eta_l: 1.0
+  eta_g: 1.0
+
 fednova:
-  momentum: 0.9  # momentum for normalized averaging
-  
+  momentum: 0.9
+
 fedopt:
-  server_optimizer: adam  # adam, sgd, adagrad
-  server_lr: 1.0  # server learning rate
-  beta1: 0.9  # adam beta1
-  beta2: 0.999  # adam beta2
+  server_optimizer: adam
+  server_lr: 1.0
+  beta1: 0.9
+  beta2: 0.999
 
-# aggregation options
-weighted_averaging: true  # weight by number of samples
-differential_privacy: false  # enable dp-sgd
-byzantine_robust: false  # enable byzantine-robust aggregation
-
-# advanced server options
-save_checkpoints: true  # save model checkpoints
+weighted_averaging: true
+differential_privacy: false
+byzantine_robust: false
+save_checkpoints: true
 checkpoint_dir: ./checkpoints
-evaluate_every: 1  # evaluate every n rounds
-early_stopping: false  # stop if no improvement
-patience: 3  # rounds to wait for improvement 
+evaluate_every: 1
+early_stopping: false
+patience: 3

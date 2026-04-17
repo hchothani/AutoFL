@@ -1,5 +1,10 @@
-num_cpus: 8
+num_cpus: 2
 num_gpus: 0.2
-type: normal
-epochs: 10
-falloff: 0.0 
+local_epochs: 3
+learning_rate: 0.01
+batch_size: 32
+simulate_delay: false
+min_delay: 0.5
+max_delay: 3.0
+falloff: 0.0
+max_concurrency: null

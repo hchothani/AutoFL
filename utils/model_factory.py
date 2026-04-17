@@ -18,10 +18,10 @@ def create_model(cfg: DictConfig):
     """
     model_name = cfg.model.name
 
-    # 1. Extract dimensions from config (with safe fallbacks to CIFAR defaults)
-    num_classes = cfg.dataset.get("num_classes", 10)
-    in_channels = cfg.dataset.get("in_channels", 3)
-    input_size = cfg.dataset.get("input_size", 32)
+    # 1. Extract dimensions from validated config
+    num_classes = cfg.dataset.num_classes
+    in_channels = cfg.dataset.in_channels
+    input_size = cfg.dataset.input_size
 
     # 2. Get the blueprint function/class from our registry
     ModelConstructor = get_model_class(model_name)

@@ -1,3 +1,6 @@
 project: autofl-testing
-name: auto_generated
-mode: online 
+mode: online
+run_name_keys:
+  - dataset.workload
+  - model.name
+  - runtime.mode

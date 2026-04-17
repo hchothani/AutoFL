@@ -4,19 +4,19 @@ guide for running domain incremental continual federated learning experiments.
 
 ## quick start
 
-run experiments using `mclmain.py`:
+run experiments using `main.py`:
 
 ```bash
 # default: cifar10 + simple_cnn + naive strategy
-python mclmain.py
+python main.py
 
 # use pre-made experiment configs
-python mclmain.py --config-path config/experiments --config-name cifar10_domain
-python mclmain.py --config-path config/experiments --config-name cifar100_resnet
-python mclmain.py --config-path config/experiments --config-name quick_test
+python main.py experiments=sync_cifar10
+python main.py experiments=async_cifar100_resnet18_gpu
+python main.py experiments=temp
 
 # command line overrides
-python mclmain.py dataset.workload=cifar100 model.name=resnet cl.strategy=domain
+python main.py dataset.workload=cifar100 model=resnet18 runtime=async
 ```
 
 ## available workloads

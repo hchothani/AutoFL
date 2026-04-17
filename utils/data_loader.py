@@ -80,10 +80,10 @@ def get_data_loaders(cfg, num_clients: int):
     Handles fetching, partitioning, and wrapping datasets into DataLoaders.
     """
     workload_name = cfg.dataset.workload
-    data_dir = cfg.dataset.get("data_dir", "./data")
+    data_dir = cfg.dataset.data_dir
     batch_size = cfg.client.batch_size
-    partition_type = cfg.dataset.get("partition_type", "iid")
-    alpha = cfg.dataset.get("alpha", 0.5)
+    partition_type = cfg.dataset.partition_type
+    alpha = cfg.dataset.alpha
 
     # 1. Ask the Workload Router for the raw datasets
     global_train_dataset, global_test_dataset, metadata = load_workload(

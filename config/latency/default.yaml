@@ -1,0 +1,16 @@
+enabled: true
+csv_path: omnet-data/latency_with_10cars2RSU_30.09.2025.csv
+sampling_mode: chunk
+scaling_factor: 1.0
+threshold_multiplier: 10000.0
+drop_behavior: skip
+sleep: false
+sleep_log: true
+random_seed: 42
+max_clients: 10
+throughput_floor_kbps: 10.0
+upload_multiplier: 1.0
+download_multiplier: 1.0
+skip_if_slow_aggregation: false
+skip_if_slow_margin: 1.0
+log_round_time_variance: false

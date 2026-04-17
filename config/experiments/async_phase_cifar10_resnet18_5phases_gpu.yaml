@@ -1,15 +1,8 @@
-# Phase-adaptive async FL variant for comparison
-# Run:
-#   python mclmain_async.py --config-path config/experiments --config-name async_phase_cifar10_resnet18_5phases_gpu
-
+# @package _global_
 defaults:
-  - ../config
-
-model:
-  name: resnet18
-  arch: resnet18
-  num_classes: 10
-  pretrained: false
+  - override /runtime: async
+  - override /model: resnet18
+  - _self_
 
 dataset:
   workload: cifar10
@@ -31,7 +24,6 @@ client:
   learning_rate: 0.01
 
 async:
-  enabled: true
   total_train_time: 900
   waiting_interval: 30
   max_workers: 4
@@ -48,7 +40,6 @@ async:
   simulate_delay: true
   min_delay: 0.5
   max_delay: 3.0
-
   phase_adaptation:
     enabled: true
     num_phases: 5
@@ -59,7 +50,5 @@ async:
     adapter_learning_rate: 0.01
 
 wb:
-  enabled: true
   mode: disabled
-  name: async_phase_cifar10_resnet18_5phases
   project: autofl-async-phase

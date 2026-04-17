@@ -1,4 +1,4 @@
-i# AutoFL: A Modular Federated Continual Learning Framework for Autonomous Vehicles
+# AutoFL: A Modular Federated Continual Learning Framework for Autonomous Vehicles
 
 Built on top of PyTorch, Ray, and Flower, AutoFL is heavily optimized to eliminate GPU VRAM bottlenecks, simulate realistic data heterogeneity, and completely decouple neural network architectures from dataset constraints.
 
@@ -32,8 +32,24 @@ AutoFL/
 ├── workloads/              # Dataset fetchers, augmentations, and standardizers (Plugins).
 └── tests/                  # Lightning-fast architectural unit tests.
 
-## The Execution Workflow 
+## The Execution Workflow
 
 1. **Configuration Load** : ```main.py``` reads ```config.yaml```
 2. __Data Fetch__ : the ```data_loader.py``` asks the ```workloads``` router for the requested dataset. The dataset returns the raw data alongside physical metadata(channels, classes).
+
+## Running With Hydra
+
+Use Hydra group overrides to pick experiments and runtime modes:
+
+```bash
+# Default composed run (sync + simple_cnn + cifar10)
+python main.py
+
+# Select a predefined experiment
+python main.py experiments=sync_cifar10
+python main.py experiments=async_cifar10_gpu
+
+# Ad-hoc overrides
+python main.py runtime=async model=resnet18 dataset.workload=cifar100
+```
  

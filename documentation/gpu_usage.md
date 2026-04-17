@@ -23,5 +23,5 @@ client:
 
 ### Fast GPU Training (CIFAR10)
 ```bash
-python mclmain.py --config-path config/experiments --config-name cifar10_gpu_fast
+python main.py experiments=async_cifar10_gpu
 ```

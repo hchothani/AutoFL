@@ -43,26 +43,26 @@ class AsyncRayClientActor:
 
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     """Extract async configuration from the config."""
-    async_cfg = cfg.get("async", {})
-    if isinstance(async_cfg, DictConfig):
-        async_cfg = OmegaConf.to_container(async_cfg, resolve=True)
+    async_cfg = OmegaConf.to_container(cfg["async"], resolve=True)
+    phase_cfg = async_cfg.get("phase_adaptation", {})
     return {
-        "total_train_time": async_cfg.get("total_train_time", 300),
-        "waiting_interval": async_cfg.get("waiting_interval", 10),
-        "max_workers": async_cfg.get("max_workers", 4),
-        "aggregation_strategy": async_cfg.get("aggregation_strategy", "fedasync"),
-        "staleness_alpha": async_cfg.get("staleness_alpha", 0.5),
-        "fedasync_mixing_alpha": async_cfg.get("fedasync_mixing_alpha", 0.9),
-        "fedasync_a": async_cfg.get("fedasync_a", 0.5),
-        "use_staleness": async_cfg.get("use_staleness", True),
-        "use_sample_weighing": async_cfg.get("use_sample_weighing", True),
-        "send_gradients": async_cfg.get("send_gradients", False),
-        "server_artificial_delay": async_cfg.get("server_artificial_delay", False),
-        "is_streaming": async_cfg.get("is_streaming", False),
-        "client_local_delay": async_cfg.get("client_local_delay", False),
-        "simulate_delay": async_cfg.get("simulate_delay", True),
-        "min_delay": async_cfg.get("min_delay", 0.5),
-        "max_delay": async_cfg.get("max_delay", 3.0),
+        "total_train_time": async_cfg["total_train_time"],
+        "waiting_interval": async_cfg["waiting_interval"],
+        "max_workers": async_cfg["max_workers"],
+        "aggregation_strategy": async_cfg["aggregation_strategy"],
+        "staleness_alpha": async_cfg["staleness_alpha"],
+        "fedasync_mixing_alpha": async_cfg["fedasync_mixing_alpha"],
+        "fedasync_a": async_cfg["fedasync_a"],
+        "use_staleness": async_cfg["use_staleness"],
+        "use_sample_weighing": async_cfg["use_sample_weighing"],
+        "send_gradients": async_cfg["send_gradients"],
+        "server_artificial_delay": async_cfg["server_artificial_delay"],
+        "is_streaming": async_cfg["is_streaming"],
+        "client_local_delay": async_cfg["client_local_delay"],
+        "simulate_delay": async_cfg["simulate_delay"],
+        "min_delay": async_cfg["min_delay"],
+        "max_delay": async_cfg["max_delay"],
+        "phase_adaptation": phase_cfg,
     }
 
 

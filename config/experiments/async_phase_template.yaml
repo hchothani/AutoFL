@@ -1,15 +1,8 @@
-# Generic template for async phase-adaptive FL.
-# Copy and adjust dataset/model fields as needed.
-
+# @package _global_
 defaults:
-  - ../config
-
-model:
-  name: resnet18
-  arch: resnet18
-  # Change to match workload (e.g., 100 for CIFAR-100)
-  num_classes: 10
-  pretrained: false
+  - override /runtime: async
+  - override /model: resnet18
+  - _self_
 
 dataset:
   workload: cifar10
@@ -31,7 +24,6 @@ client:
   learning_rate: 0.01
 
 async:
-  enabled: true
   total_train_time: 1200
   waiting_interval: 30
   max_workers: 4
@@ -48,21 +40,15 @@ async:
   simulate_delay: true
   min_delay: 0.5
   max_delay: 3.0
-
   phase_adaptation:
     enabled: true
     num_phases: 4
-    # Example names for traffic phases near RSU
     phase_names: [morning, midday, evening, night]
-    # Must match num_phases. Values are normalized internally.
     phase_weights: [0.25, 0.25, 0.25, 0.25]
-    # Parameter prefixes used as phase-specific fast-updating adapters.
-    # For ResNet in this repo, classifier is model.fc.
     adapter_param_patterns: ["model.fc"]
     backbone_learning_rate: 0.001
     adapter_learning_rate: 0.01
 
 wb:
-  enabled: true
-  name: async_phase_template
+  mode: online
   project: autofl-async-phase
