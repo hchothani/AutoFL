@@ -27,6 +27,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         params_dict = zip(model.state_dict().keys(), parameters)
         state_dict = {k: torch.tensor(v) for k, v in params_dict}
         model.load_state_dict(state_dict, strict=True)
+        current_phase = config.get("current_phase", 0)
         
         model.eval()
         criterion = torch.nn.CrossEntropyLoss()
@@ -49,7 +50,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         accuracy = correct / max(total, 1)
         elapsed_time = time.time() - start_time
         
-        print(f"[Round {server_round} | {elapsed_time:.1f}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+        print(f"[Phase: {current_phase}][Round {server_round} | {elapsed_time:.1f}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
         
         if wandb_enabled:
             wandb.log({
@@ -64,7 +65,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
     # Setup Contextual Configuration
     def on_fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:
         cl_enabled = cfg.get("cl", {}).get("enabled", False)
-        num_phases = cfg.get("cl", {}).get("num_phases", 1) if cl_enabled else 1
+        num_phases = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
         rounds_per_phase = max(1, num_rounds // num_phases)
         
         current_phase = min((server_round - 1) // rounds_per_phase, num_phases - 1)
