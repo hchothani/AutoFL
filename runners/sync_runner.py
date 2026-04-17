@@ -12,14 +12,19 @@ import wandb
 
 from clients.sync_client import SyncSimulatedClient
 
-def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_loader, device, wandb_enabled):
+def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_loaders, device, wandb_enabled):
     """Pure synchronous FL execution loop using standard Flower logic."""
     num_rounds = cfg.server.num_rounds
     num_clients = cfg.server.num_clients
+
     cl_enabled = cfg.get("cl", {}).get("enabled", False)
     num_phases = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
     rounds_per_phase = max(1, num_rounds // num_phases)
-    
+
+    phase_max_accs = [0.0] * num_phases
+    initial_phase_acc = [None] * num_phases
+    seen_phases = set()
+
     print(f"\n[Sync Runner] Initializing synchronous simulation for {num_rounds} rounds...")
 
     start_time = time.time()
@@ -31,40 +36,80 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         state_dict = {k: torch.tensor(v) for k, v in params_dict}
         model.load_state_dict(state_dict, strict=True)
 
-        current_phase = min((server_round - 1) // rounds_per_phase, num_phases - 1)
+        current_phase = 0 if server_round == 0 else min((server_round - 1) // rounds_per_phase, num_phases - 1)
         
         model.eval()
         criterion = torch.nn.CrossEntropyLoss()
-        total_loss, correct, total = 0.0, 0, 0
+        total_phases_loss = 0.0
+        total_correct = 0
+        total_total = 0
+        metrics_dict = {}
+        phases_accuracies = []
         
-        with torch.no_grad():
-            for batch in global_test_loader:
-                if isinstance(batch, dict):
-                    images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
-                else:
-                    images, labels = batch[0].to(device), batch[1].to(device)
+        for phase_idx, phase_loader in enumerate(global_test_loaders)
+            with torch.no_grad():
+                for batch in global_test_loaders:
+                    if isinstance(batch, dict):
+                        images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
+                    else:
+                        images, labels = batch[0].to(device), batch[1].to(device)
                     
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                total_loss += loss.item() * labels.size(0)
-                correct += outputs.max(1)[1].eq(labels).sum().item()
-                total += labels.size(0)
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+                    phase_loss += loss.item() * labels.size(0)
+                    correct += outputs.max(1)[1].eq(labels).sum().item()
+                    total += labels.size(0)
+            total_total += total
+            total_correct += correct
+            phase_accuracy = correct / max(total, 1)
+            phase_accuracies.append(phase_accuracy)
+            total_phases_loss += phase_loss / max(total, 1)
+            metrics[f"phase_{phase_idx}_accuracy"] = phase_accuracy
 
-        avg_loss = total_loss / max(total, 1)
-        accuracy = correct / max(total, 1)
+        avg_loss = total_phases_loss / max(total, 1)
+        avg_accuracy = total_correct / max(total, 1)
+
+        if server_round == 0 or initial_phase_acc[0] is None:
+            for p in range(num_phases):
+                initial_phase_acc[p] = phase_accuracies[p]
+        seen_phases.add(current_phase) 
+        phase_max_accs[current_phase] = max()
+
+        bwt, fwt = 0.0, 0.0
+        
+        # Calculate BWT (Average performance drop on past tasks)
+        if current_phase > 0:
+            bwt = sum(phase_accuracies[p] - phase_max_accs[p] for p in range(current_phase)) / current_phase
+            
+        # Calculate FWT (Zero-shot improvement on future tasks vs initial init)
+        if current_phase < num_phases - 1:
+            fwt = sum(phase_accuracies[p] - initial_phase_acc[p] for p in range(current_phase + 1, num_phases)) / (num_phases - current_phase - 1)
+
+        # Calculate Average Seen Accuracy
+        avg_seen_acc = sum(phase_accuracies[p] for p in seen_phases) / len(seen_phases)
+
+        metrics_dict["bwt"] = bwt
+        metrics_dict["fwt"] = fwt
+        metrics_dict["avg_seen_acc"] = avg_seen_acc
+        
         elapsed_time = time.time() - start_time
         
         print(f"[Phase: {current_phase}][Round {server_round} | {elapsed_time:.1f}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
         
         if wandb_enabled:
-            wandb.log({
+            log_dict = {
                 "sync/loss": avg_loss, 
-                "sync/accuracy": accuracy,
+                "sync/accuracy": avg_accuracy,
                 "sync/round": server_round,
                 "sync/elapsed_time": elapsed_time
-            }, step=server_round)
+            }
+            if cl_enabled:
+                for k, v in metrics_dict.items():
+                    log_dict[f"sync/{k}"] = v
+            wandb.log(log_dict, step=server_round)
+
             
-        return avg_loss, {"accuracy": accuracy, "elapsed_time": elapsed_time}
+        return avg_loss, log_dict
 
     # Setup Contextual Configuration
     def on_fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:        

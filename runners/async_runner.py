@@ -246,17 +246,20 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             metrics_dict["fwt"] = fwt
             metrics_dict["avg_seen_acc"] = avg_seen_acc
 
-            acc = metrics_dict["accuracy"]
+            acc = metrics_dict.pop("accuracy")
             print(f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}, BWT: {bwt:.4f}, FWT: {fwt:.4f}\n")
             
             if wandb_enabled:
                 log_dict = {
                     "async/loss": loss,
+                    "async/accuracy": acc
                     "async/updates": update_count,
                     "async/elapsed_time": time.time() - start_time
                 }
-                for k, v in metrics_dict.items():
-                    log_dict[f"async/{k}"] = v
+                cl_enabled = cfg.get(cl, {}).get("enabled", False)
+                if cl_enabled:
+                    for k, v in metrics_dict.items():
+                        if k != "accuracy" log_dict[f"async/{k}"] = v
                 wandb.log(log_dict, step=eval_counter)
             last_eval_time = time.time()
 
