@@ -1,8 +1,9 @@
 model:
-  name: resnet18
+  name: simple_cnn
 
 dataset:
-  workload: cifar100
+  workload: cifar10
+  split: niid
 
 async:
   enabled: true

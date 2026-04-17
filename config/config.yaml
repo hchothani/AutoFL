@@ -33,6 +33,7 @@ dataset:
   num_classes: 10
   in_channels: 3
   input_size: 32
+  alpha: 0.5
   
 
 async:
