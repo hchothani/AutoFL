@@ -67,8 +67,8 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
             total_phases_loss += phase_loss / max(total, 1)
             metrics_dict[f"phase_{phase_idx}_accuracy"] = phase_accuracy
 
-        avg_loss = total_phases_loss / max(total, 1)
-        avg_accuracy = total_correct / max(total, 1)
+        avg_loss = total_phases_loss / len(global_test_loader)
+        avg_accuracy = total_correct / max(total_total, 1)
 
         if server_round == 0 or initial_phase_acc[0] is None:
             for p in range(num_phases):
