@@ -103,7 +103,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     # Calculate Phase Timings
     total_train_time = async_cfg["total_train_time"]
     cl_enabled = cfg.get("cl", {}).get("enabled", False)
-    num_phases = cfg.get("cl", {}).get("num_phases", 1) if cl_enabled else 1
+    num_phases = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
     phase_duration = total_train_time / num_phases
 
     phase_total_samples = [
