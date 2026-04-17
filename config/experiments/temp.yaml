@@ -3,7 +3,7 @@ model:
 
 dataset:
   workload: cifar10
-  split: niid
+  partition_type: niid
 
 async:
   enabled: true

@@ -28,7 +28,7 @@ model:
 
 dataset:
   workload: cifar10
-  split: iid
+  partition_type: iid
   num_classes: 10
   in_channels: 3
   input_size: 32

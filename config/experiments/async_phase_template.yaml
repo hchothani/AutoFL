@@ -5,7 +5,7 @@ defaults:
   - ../config
 
 model:
-  name: resnet
+  name: resnet18
   arch: resnet18
   # Change to match workload (e.g., 100 for CIFAR-100)
   num_classes: 10

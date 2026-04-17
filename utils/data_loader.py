@@ -82,7 +82,7 @@ def get_data_loaders(cfg, num_clients: int):
     workload_name = cfg.dataset.workload
     data_dir = cfg.dataset.get("data_dir", "./data")
     batch_size = cfg.client.batch_size
-    partition_type = cfg.dataset.get("split", "iid")
+    partition_type = cfg.dataset.get("partition_type", "iid")
     alpha = cfg.dataset.get("alpha", 0.5)
 
     # 1. Ask the Workload Router for the raw datasets

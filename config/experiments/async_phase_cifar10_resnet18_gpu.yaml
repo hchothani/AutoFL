@@ -6,7 +6,7 @@ defaults:
   - ../config
 
 model:
-  name: resnet
+  name: resnet18
   arch: resnet18
   num_classes: 10
   pretrained: false

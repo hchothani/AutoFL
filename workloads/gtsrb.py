@@ -7,7 +7,7 @@ def get_datasets(data_dir: str):
 
     train_transform = transforms.Compose(
         [
-            transforms.Resize((32, 32)),  # CRITICAL: Standardizes variable image sizes
+            transforms.Resize((32, 32)),  # IMP: Standardizes variable image sizes
             transforms.RandomRotation(15),
             transforms.ColorJitter(
                 brightness=0.2, contrast=0.2
