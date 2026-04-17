@@ -1,0 +1,24 @@
+total_train_time: 120
+waiting_interval: 10
+max_workers: 4
+aggregation_strategy: fedasync
+staleness_alpha: 0.5
+fedasync_mixing_alpha: 0.9
+fedasync_a: 0.5
+use_staleness: true
+use_sample_weighing: true
+send_gradients: false
+server_artificial_delay: false
+is_streaming: false
+client_local_delay: false
+simulate_delay: true
+min_delay: 0.5
+max_delay: 3.0
+phase_adaptation:
+  enabled: false
+  num_phases: 4
+  phase_names: [morning, midday, evening, night]
+  phase_weights: [0.25, 0.25, 0.25, 0.25]
+  adapter_param_patterns: ["model.fc"]
+  backbone_learning_rate: null
+  adapter_learning_rate: null

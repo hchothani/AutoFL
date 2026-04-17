@@ -1,10 +1,8 @@
+# @package _global_
 defaults:
-  - ../config
-
-model:
-  name: simple_cnn
-  num_classes: 10
-  pretrained: false
+  - override /runtime: sync
+  - override /model: simple_cnn
+  - _self_
 
 dataset:
   workload: cifar10
@@ -24,11 +22,7 @@ client:
   local_epochs: 2
   batch_size: 32
   learning_rate: 0.1
-  
-async:
-  enabled: false
 
 wb:
-  enabled: true
-  name: sync_cifar10_test
+  mode: online
   project: autofl-sync

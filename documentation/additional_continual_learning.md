@@ -129,17 +129,17 @@ server:
 
 ### 1. permuted mnist with ewc
 ```bash
-python mclmain.py --config-path config/experiments --config-name permuted_mnist_ewc
+python main.py experiments=sync_cifar10 dataset.workload=mnist
 ```
 
 ### 2. split cifar10 with replay
 ```bash
-python mclmain.py --config-path config/experiments --config-name split_cifar10_replay
+python main.py experiments=sync_cifar10 dataset.workload=cifar10
 ```
 
 ### 3. hybrid strategy with mobilenet
 ```bash
-python mclmain.py --config-path config/experiments --config-name cifar10_hybrid_gpu
+python main.py experiments=async_cifar10_gpu model=mobilenet_v2
 ```
 
 ## creating custom experiments

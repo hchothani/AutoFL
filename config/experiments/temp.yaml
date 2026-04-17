@@ -1,9 +1,9 @@
-model:
-  name: simple_cnn
+# @package _global_
+defaults:
+  - override /runtime: async
+  - override /model: simple_cnn
+  - _self_
 
 dataset:
   workload: cifar10
-  split: niid
-
-async:
-  enabled: true
+  partition_type: niid

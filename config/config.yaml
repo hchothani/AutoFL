@@ -1,83 +1,24 @@
----
-client:
-  num_cpus: 2
-  num_gpus: 0.20
-  local_epochs: 3
-  learning_rate: 0.01
-  batch_size: 32
-  simulate_delay: false
-  min_delay: 0.5
-  max_delay: 3
-  falloff: 0.0
-  max_concurrency: null
+defaults:
+  - runtime: sync
+  - client: default
+  - server: default
+  - model: simple_cnn
+  - dataset: default
+  - async: default
+  - latency: default
+  - wb: default
+  - logging: default
+  - optional experiments: null
+  - _self_
 
-server:
-  num_clients: 5
-  num_rounds: 10
-  fraction_fit: 1.0
-  fraction_eval: 1.0
-  min_fit: 5
-  min_eval: 5
-  strategy: fedavg
-
-cl:
-  num_experiences: 5
-  strategy: naive 
-
-model:
-  name: simple_cnn
-
-dataset:
-  workload: cifar10
-  split: iid
-  num_classes: 10
-  in_channels: 3
-  input_size: 32
-  alpha: 0.5
-  
-
-async:
-  enabled: false
-  total_train_time: 120
-  waiting_interval: 10
-  aggregation_stratgey: fedasync
-  staleness_alpha: 0.5
-  fedasync_mixing_alpha: 0.9
-  fedasync_a: 0.5
-  use_staleness: true
-  use_sample_weighting: true
-  send_gradients: false
-  server_artificial_delay: false
-  is_streaming: false
-  client_local_delay: false
-
-wb:
-  project: autofl-testing
-  mode: online
-  run_name_keys:
-    - "dataset.workload"
-    - "model.name"
-    - "async.enabled"
-
-latency:
-  enabled: true
-  csv_path: omnet-data/latency_with_10cars2RSU_30.09.2025.csv
-  sampling_mode: chunk  # options: mean, trace, chunk, random
-  scaling_factor: 1.0
-  threshold_multiplier: 10000.0
-  drop_behavior: skip  # options: skip, remove
-  sleep: false  # physical sleep is disabled; use sleep_log to simulate latency in metrics
-  sleep_log: true
-  random_seed: 42
-  max_clients: 10
-  throughput_floor_kbps: 10.0
-  upload_multiplier: 1.0
-  download_multiplier: 1.0
-
-logging:
-  output_root: outputs
-  save_client_metrics: true
-  save_server_metrics: true
-  append_run_name_to_dir: true
+hydra:
+  job:
+    chdir: false
+  output_subdir: null
+  run:
+    dir: .
+  sweep:
+    dir: .
+    subdir: multirun/${now:%Y%m%d_%H%M%S}
 
 

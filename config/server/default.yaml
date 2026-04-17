@@ -1,0 +1,32 @@
+num_rounds: 10
+num_clients: 5
+fraction_fit: 1.0
+fraction_eval: 1.0
+min_fit: 5
+min_eval: 5
+strategy: fedavg
+
+fedprox:
+  mu: 0.01
+
+scaffold:
+  eta_l: 1.0
+  eta_g: 1.0
+
+fednova:
+  momentum: 0.9
+
+fedopt:
+  server_optimizer: adam
+  server_lr: 1.0
+  beta1: 0.9
+  beta2: 0.999
+
+weighted_averaging: true
+differential_privacy: false
+byzantine_robust: false
+save_checkpoints: true
+checkpoint_dir: ./checkpoints
+evaluate_every: 1
+early_stopping: false
+patience: 3

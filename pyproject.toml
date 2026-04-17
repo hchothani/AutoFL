@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "AutoFL"
+version = "0.1.0"
+description = "Federated Continual Learning Framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "flwr>=1.12.0",
+  "flwr-datasets>=0.5.0",
+  "hydra-core>=1.3.2",
+  "numpy>=1.24.0",
+  "omegaconf>=2.3.0",
+  "pandas>=2.0.0",
+  "pyyaml>=6.0",
+  "ray>=2.10.0",
+  "torch>=2.1.0",
+  "torchvision>=0.16.0",
+  "wandb>=0.17.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=26.3.1",
+  "mypy>=1.11.0",
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+]

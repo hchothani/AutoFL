@@ -1,0 +1,3 @@
+name: resnet18
+pretrained: false
+freeze_backbone: false

@@ -1,0 +1,3 @@
+name: mobilenet_v3_small
+version: v3_small
+pretrained: false

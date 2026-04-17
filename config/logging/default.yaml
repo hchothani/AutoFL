@@ -1,0 +1,4 @@
+output_root: outputs
+save_client_metrics: true
+save_server_metrics: true
+append_run_name_to_dir: true

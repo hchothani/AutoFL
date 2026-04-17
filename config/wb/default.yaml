@@ -1,0 +1,7 @@
+entity: dashlab
+project: autofl-testing
+mode: online
+run_name_keys:
+  - dataset.workload
+  - model.name
+  - runtime.mode

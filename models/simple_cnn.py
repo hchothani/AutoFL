@@ -2,12 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class SimpleCNN(nn.Module):
     """A mathematically pure CNN that adapts to any input size and channels."""
-    
-    def __init__(self, num_classes: int = 10, in_channels: int = 3, input_size: int = 32):
+
+    def __init__(
+        self, num_classes: int = 10, in_channels: int = 3, input_size: int = 32
+    ):
         super(SimpleCNN, self).__init__()
-        
+
         self.conv1 = nn.Conv2d(in_channels, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(6, 16, 5)
@@ -24,7 +27,7 @@ class SimpleCNN(nn.Module):
             dummy_input = torch.zeros(1, in_channels, input_size, input_size)
             x = self.pool(F.relu(self.conv1(dummy_input)))
             x = self.pool(F.relu(self.conv2(x)))
-            return x.numel() 
+            return x.numel()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.pool(F.relu(self.conv1(x)))
