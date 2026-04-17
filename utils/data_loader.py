@@ -48,7 +48,7 @@ def partition_iid(dataset, num_clients: int):
     remainder = total_size % num_
     return random_split(dataset, lenghts, generator=torch.Generator().manual_seed(42))
 
-def partition_dataset(dataset, num_clients: int, partition_type: str = "iid", alpha: float = 0.5):
+def partition_dataset(dataset, num_clients: int, num_classes: int, partition_type: str = "iid", alpha: float = 0.5):
     """Split the global dataset into smaller chunks for each vehicle/client."""
     
     if partition_type == "iid":
@@ -57,7 +57,7 @@ def partition_dataset(dataset, num_clients: int, partition_type: str = "iid", al
         
     elif partition_type in ["dirichlet", "non_iid", "niid"]:
         print(f"[Dataset] Partitioning NIID (Dirichlet alpha = {alpha})")
-        return partition_niid(dataset, num_clients, alpha)
+        return partition_niid(dataset, num_clients, num_classes, alpha)
     else:
         raise ValueError(f"Partition type '{partition_type}' is not supported.")
 
@@ -76,9 +76,11 @@ def get_data_loaders(cfg, num_clients: int):
     # 1. Ask the Workload Router for the raw datasets
     global_train_dataset, global_test_dataset, metadata = load_workload(workload_name, data_dir)
 
+    num_classes = metadata["num_classes"]
+
     # 2. Partition the data for the simulated clients
-    client_train_subsets = partition_dataset(global_train_dataset, num_clients, partition_type)
-    client_test_subsets = partition_dataset(global_test_dataset, num_clients, partition_type)
+    client_train_subsets = partition_dataset(global_train_dataset, num_clients, num_classes, partition_type)
+    client_test_subsets = partition_dataset(global_test_dataset, num_clients, num_classes, partition_type)
 
     # 3. Wrap the subsets in PyTorch DataLoaders
     train_loaders = [
