@@ -48,7 +48,7 @@ def partition_iid(dataset, num_clients: int):
     remainder = total_size % num_
     return random_split(dataset, lenghts, generator=torch.Generator().manual_seed(42))
 
-def partition_dataset(dataset, num_clients: int, partition_type: str = "iid", alpha: float):
+def partition_dataset(dataset, num_clients: int, partition_type: str = "iid", alpha: float = 0.5):
     """Split the global dataset into smaller chunks for each vehicle/client."""
     
     if partition_type == "iid":
