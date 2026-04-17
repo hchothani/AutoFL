@@ -72,6 +72,13 @@ def main():
     is_async = cfg.get("async", {}).get("enabled", False)
     mode_suffix = "async" if is_async else "sync"
 
+    cl_enabled = cfg.get("cl", {}).get("enabled", False)
+    if cl_enabled:
+        num_phases = cfg.get("cl", {}).get("num_phases", 1)
+        print(f"\n[Continual Learning] ENABLED: Operating in Phase-Wise FCL Mode ({num_phases})")
+    else:
+        print(f"\n[Continual Learning] DISABLED: Operating in standard Static FL mode. SINGULAR PHASE")
+
     # 1. Setup Environment
     run_dir = prepare_run_directory(cfg, is_async)
     init_runtime_recorder(cfg)

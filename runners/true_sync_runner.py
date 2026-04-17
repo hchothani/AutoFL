@@ -19,9 +19,9 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
     
     print(f"\n[Sync Runner] Initializing synchronous simulation for {num_rounds} rounds...")
 
-    start_time = time.time()
+    start_time = time.time();
 
-    # 1. Centralized Evaluator
+    # 1. Centralized Evaluator (Runs on the Server)
     def evaluate_fn(server_round: int, parameters: fl.common.NDArrays, config: Dict) -> Optional[Tuple[float, Dict]]:
         model = model_fn().to(device)
         params_dict = zip(model.state_dict().keys(), parameters)
@@ -47,6 +47,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
 
         avg_loss = total_loss / max(total, 1)
         accuracy = correct / max(total, 1)
+
         elapsed_time = time.time() - start_time
         
         print(f"[Round {server_round} | {elapsed_time:.1f}] Global Eval - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
@@ -61,38 +62,30 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
             
         return avg_loss, {"accuracy": accuracy, "elapsed_time": elapsed_time}
 
-    # Setup Contextual Configuration
-    def on_fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:
-        cl_enabled = cfg.get("cl", {}).get("enabled", False)
-        num_phases = cfg.get("cl", {}).get("num_phases", 1) if cl_enabled else 1
-        rounds_per_phase = max(1, num_rounds // num_phases)
-        
-        current_phase = min((server_round - 1) // rounds_per_phase, num_phases - 1)
-        return {"current_phase": current_phase}
-
     # 2. Strategy Initialization
     strategy = fl.server.strategy.FedAvg(
         fraction_fit=cfg.server.fraction_fit,
         min_fit_clients=cfg.server.min_fit,
         min_available_clients=num_clients,
-        evaluate_fn=evaluate_fn,
-        on_fit_config_fn=on_fit_config_fn,
-        on_evaluate_config_fn=on_fit_config_fn
+        evaluate_fn=evaluate_fn
     )
 
-    # 3. Client Factory
+    # 3. Client Factory (Spins up clients on demand)
     def client_fn(cid: str) -> fl.client.Client:
         client_idx = int(cid)
         return SyncSimulatedClient(
             cid=cid,
             model_fn=model_fn,
-            train_loaders=train_loaders[client_idx], # Passed as list
-            test_loaders=test_loaders[client_idx],   # Passed as list
+            train_loader=train_loaders[client_idx],
+            test_loader=test_loaders[client_idx],
             device=device,
             cfg=cfg
         ).to_client()
 
     # 4. Execute Simulation
+#    start_time = time.time()
+    
+    # Run the Flower simulation engine
     history = fl.simulation.start_simulation(
         client_fn=client_fn,
         num_clients=num_clients,

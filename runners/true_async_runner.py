@@ -1,3 +1,4 @@
+# Patch for old torch versions to be able to work with modern data transforms
 import collections
 import collections.abc
 collections.Sequence = collections.abc.Sequence
@@ -17,19 +18,28 @@ from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
 
+#@ray.remote
+#def execute_ray_client(client_idx: int, client, params, start_timestamp) -> tuple:
+#    from flwr.common import FitIns
+#    config = {"start_timestamp": start_timestamp}
+#    return client_idx, client.fit(FitIns(parameters=params, config=config))
+
 @ray.remote
 class AsyncRayClientActor:
     def __init__(self, client_idx, client_obj):
         self.client_idx = client_idx
         self.client = client_obj
         
-    def fit(self, params, start_timestamp, current_phase):
+    def fit(self, params, start_timestamp):
         from flwr.common import FitIns
-        config = {"start_timestamp": start_timestamp, "current_phase": current_phase}
+        config = {"start_timestamp": start_timestamp}
+        # The heavy PyTorch DataLoader stays in memory; only weights are processed
         fit_res = self.client.fit(FitIns(parameters=params, config=config))
         return self.client_idx, fit_res
 
+
 def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
+    """Extract async configuration from the config."""
     async_cfg = cfg.get("async", {})
     if isinstance(async_cfg, DictConfig):
         async_cfg = OmegaConf.to_container(async_cfg, resolve=True)
@@ -53,6 +63,7 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     }
 
 def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test_loader: DataLoader, device: torch.device) -> tuple[float, float]:
+    """Evaluate model with given parameters."""
     state_dict = model.state_dict()
     for key, param in zip(state_dict.keys(), params):
         state_dict[key] = torch.tensor(param).to(device)
@@ -81,6 +92,7 @@ def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test
     return total_loss / max(total, 1), correct / max(total, 1)
 
 def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, global_test_loader, device, wandb_enabled):
+    """Run async FL simulation exactly as originally written."""
     num_clients = len(train_loaders)
 
     print(f"\nCreating {num_clients} simulated clients...")
@@ -100,18 +112,9 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     global_model = model_fn().to(device)
     global_params = [val.cpu().numpy() for _, val in global_model.state_dict().items()]
 
-    # Calculate Phase Timings
-    cl_enabled = cfg.get("cl", {}).get("enabled", False)
-    num_phases = cfg.get("cl", {}).get("num_phases", 1) if cl_enabled else 1
-    phase_duration = total_train_time / num_phases
-
-    phase_total_samples = [
-        sum(len(loaders[p].dataset) for loaders in train_loaders)
-        for p in range(num_phases)
-    ]
-    total_samples = sum(len(loaders[0].dataset) for loaders in train_loaders)
+    total_samples = sum(len(loader.dataset) for loader in train_loaders)
     async_strategy = AsynchronousStrategy(
-        total_samples=phase_total_samples[0],
+        total_samples=total_samples,
         staleness_alpha=async_cfg["staleness_alpha"],
         fedasync_mixing_alpha=async_cfg["fedasync_mixing_alpha"],
         fedasync_a=async_cfg["fedasync_a"],
@@ -127,7 +130,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 
     total_train_time = async_cfg["total_train_time"]
     waiting_interval = async_cfg["waiting_interval"]
-    
+    max_workers = async_cfg["max_workers"]
 
     initial_loss, initial_acc = evaluate_global_model(global_model, global_params, global_test_loader, device)
     
@@ -138,21 +141,37 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     end_time = start_time + total_train_time
     update_count = 0
 
-    def aggregate_result(client_idx: int, fit_res, phase_idx: int):
+#    def train_client(client_idx: int) -> tuple:
+#        from flwr.common import FitIns
+#        client = clients[client_idx]
+#        with param_lock:
+#            params = current_params
+#        config = {"start_timestamp": time.time()}
+#        return client_idx, client.fit(FitIns(parameters=params, config=config))
+
+    def aggregate_result(client_idx: int, fit_res):
         nonlocal current_params, update_count
         t_diff = time.time() - fit_res.metrics.get("start_timestamp", time.time())
         with param_lock:
-            async_strategy.total_samples = phase_total_samples[phase_idx]
             current_params = async_strategy.average(current_params, fit_res.parameters, t_diff, fit_res.num_examples)
             update_count += 1
         return t_diff
 
     if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True, include_dashboard=False)
+        ray.init(
+                 ignore_reinit_error=True,
+                 include_dashboard=False
+             )
 
+    active_tasks = {}
+    client_queue = list(range(num_clients))
+    eval_counter, last_eval_time = 0, start_time
+
+    # Spawn Initial Batch of Clients
     print(f"\nDeploying {num_clients} stateful vehicle actors to the Ray cluster...")
     ray_actors = {}
     
+    # 1. Boot up the permanent Actors applying your strict Blueprint
     for i in range(num_clients):
         actor = AsyncRayClientActor.options(
             num_cpus=cfg.client.num_cpus,
@@ -163,34 +182,32 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     active_tasks = {}
     eval_counter, last_eval_time = 0, start_time
 
-    # Command ALL actors to begin training
+    # 2. Command ALL actors to begin training immediately
+    # Ray's internal scheduler naturally bottlenecks them based on main.py
     for client_idx, actor in ray_actors.items():
         with param_lock:
             params = current_params
-        task = actor.fit.remote(params, time.time(), current_phase=0)
+        task = actor.fit.remote(params, time.time())
         active_tasks[task] = client_idx
 
+    # 3. Continuous Execution Loop
     while time.time() < end_time and active_tasks:
         ready_tasks, _ = ray.wait(list(active_tasks.keys()), num_returns=1, timeout=0.1) 
         
         for task in ready_tasks:
             client_idx = active_tasks.pop(task)
             try:
-                returned_client_idx, fit_res, returned_phase = ray.get(task)
-                t_diff = aggregate_result(returned_client_idx, fit_res, returned_phase)
-                print(f"[Phase: {returned_phase}] [t={time.time() - start_time:.1f}s] Vehicle {client_idx} completed (loss: {fit_res.metrics.get('loss', 0):.4f})")
+                returned_client_idx, fit_res = ray.get(task)
+                t_diff = aggregate_result(returned_client_idx, fit_res)
+                print(f"[t={time.time() - start_time:.1f}s] Vehicle {client_idx} completed (loss: {fit_res.metrics.get('loss', 0):.4f})")
             except Exception as e:
                 print(f"[Error] Vehicle {client_idx} failed: {e}")
             
+            # RE-SUBMIT IMMEDIATELY (passing only lightweight params)
             if time.time() < end_time:
                 with param_lock:
                     params = current_params
-                
-                # Determine current phase based on wall-clock time
-                elapsed = time.time() - start_time
-                current_phase = min(int(elapsed / phase_duration), num_phases - 1)
-                
-                new_task = ray_actors[client_idx].fit.remote(params, time.time(), current_phase)
+                new_task = ray_actors[client_idx].fit.remote(params, time.time())
                 active_tasks[new_task] = client_idx
 
         # Evaluation Block
@@ -205,6 +222,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
                 wandb.log({"async/loss": loss, "async/accuracy": acc, "async/updates": update_count, "async/elapsed_time": time.time() - start_time}, step=eval_counter)
             last_eval_time = time.time()
 
+    # Clean up actors
     for actor in ray_actors.values():
         ray.kill(actor)
     ray.shutdown()    

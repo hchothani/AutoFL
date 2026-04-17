@@ -21,6 +21,7 @@ server:
   strategy: fedavg
 
 cl:
+  enabled: false
   num_experiences: 5
   strategy: naive 
 
