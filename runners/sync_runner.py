@@ -16,6 +16,9 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
     """Pure synchronous FL execution loop using standard Flower logic."""
     num_rounds = cfg.server.num_rounds
     num_clients = cfg.server.num_clients
+    cl_enabled = cfg.get("cl", {}).get("enabled", False)
+    num_phases = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
+    rounds_per_phase = max(1, num_rounds // num_phases)
     
     print(f"\n[Sync Runner] Initializing synchronous simulation for {num_rounds} rounds...")
 
@@ -27,6 +30,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         params_dict = zip(model.state_dict().keys(), parameters)
         state_dict = {k: torch.tensor(v) for k, v in params_dict}
         model.load_state_dict(state_dict, strict=True)
+
         current_phase = config.get("current_phase", 0)
         
         model.eval()
@@ -63,12 +67,9 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         return avg_loss, {"accuracy": accuracy, "elapsed_time": elapsed_time}
 
     # Setup Contextual Configuration
-    def on_fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:
-        cl_enabled = cfg.get("cl", {}).get("enabled", False)
-        num_phases = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
-        rounds_per_phase = max(1, num_rounds // num_phases)
-        
+    def on_fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:        
         current_phase = min((server_round - 1) // rounds_per_phase, num_phases - 1)
+        print(f"[Server] Round {server_round} starting. Instructing all vehicles to use Phase {current_phase}")
         return {"current_phase": current_phase}
 
     # 2. Strategy Initialization
