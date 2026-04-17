@@ -105,6 +105,7 @@ def get_data_loaders(cfg, num_clients: int):
 
     client_train_loaders = [[] for _ in range(num_clients)]
     client_test_loaders = [[] for _ in range(num_clients)]
+    global_test_loaders = []
     
     # 2. Process each phase independently
     for phase_idx in range(num_phases):
@@ -112,6 +113,10 @@ def get_data_loaders(cfg, num_clients: int):
         
         c_train_subsets = partition_dataset(train_phases[phase_idx], num_clients, phase_classes, partition_type, alpha)
         c_test_subsets = partition_dataset(test_phases[phase_idx], num_clients, phase_classes, partition_type, alpha)
+
+        global_test_loaders.append(
+            DataLoader(test_phases[phase_idx], batch_size=128, shuffle=False)
+        )
         
         for cid in range(num_clients):
             drop_last = len(c_train_subsets[cid]) > batch_size
@@ -122,6 +127,6 @@ def get_data_loaders(cfg, num_clients: int):
                 DataLoader(c_test_subsets[cid], batch_size=batch_size, shuffle=False)
             )
 
-    global_test_loader = DataLoader(global_test_dataset, batch_size=128, shuffle=False)
+    # global_test_loader = DataLoader(global_test_dataset, batch_size=128, shuffle=False)
 
-    return client_train_loaders, client_test_loaders, global_test_loader, metadata
+    return client_train_loaders, client_test_loaders, global_test_loaders, metadata

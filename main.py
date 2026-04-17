@@ -131,7 +131,7 @@ def main():
 
     # 4. Load Data
     print(f"\n[System] Loading {cfg.dataset.workload} Dataset..")
-    train_loaders, test_loaders, global_test_loader, metadata = get_data_loaders(cfg, cfg.server.num_clients)
+    train_loaders, test_loaders, global_test_loaders, metadata = get_data_loaders(cfg, cfg.server.num_clients)
 
     cfg.dataset.num_classes = metadata["num_classes"] 
     cfg.dataset.in_channels = metadata["in_channels"]
@@ -156,7 +156,7 @@ def main():
             model_fn,
             train_loaders,
             test_loaders,
-            global_test_loader,
+            global_test_loaders,
             device,
             wandb_enabled
         )
@@ -168,7 +168,7 @@ def main():
            model_fn=model_fn,
            train_loaders=train_loaders,
            test_loaders=test_loaders,
-           global_test_loader=global_test_loader,
+           global_test_loaders=global_test_loaders,
            device=device,
            wandb_enabled=wandb_enabled
         )

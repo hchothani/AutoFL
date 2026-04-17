@@ -52,7 +52,7 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
         "max_delay": async_cfg.get("max_delay", 3.0),
     }
 
-def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test_loader: DataLoader, device: torch.device) -> tuple[float, float]:
+def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test_loaders: List[DataLoader], device: torch.device) -> tuple[float, float]:
     state_dict = model.state_dict()
     for key, param in zip(state_dict.keys(), params):
         state_dict[key] = torch.tensor(param).to(device)
@@ -60,27 +60,40 @@ def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test
 
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
-    total_loss, correct, total = 0.0, 0, 0
+    total_phases_loss = 0.0
+    total_correct = 0
+    total_total = 0
+    metrics_dict = {}
 
-    with torch.no_grad():
-        for batch in test_loader:
-            if isinstance(batch, dict):
-                images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
-            elif isinstance(batch, (tuple, list)):
-                images, labels = batch[0].to(device), batch[1].to(device)
-            else:
-                continue
+    for phase_idx, phase_loader in enumerate(test_loaders):
+        phase_loss, correct, total = 0.0, 0, 0
+        with torch.no_grad():
+            for batch in phase_loader:
+                if isinstance(batch, dict):
+                    images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
+                elif isinstance(batch, (tuple, list)):
+                    images, labels = batch[0].to(device), batch[1].to(device)
+                else:
+                    continue
 
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            total_loss += loss.item() * labels.size(0)
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                phase_loss += loss.item() * labels.size(0)
+                _, predicted = outputs.max(1)
+                total += labels.size(0)
+                correct += predicted.eq(labels).sum().item()
+        total_total += total
+        total_correct += correct
+        phase_accuracy = correct / max(total, 1)
+        total_phases_loss += phase_loss / max(total, 1)
+        metrics_dict[f"phase_{phase_idx}_accuracy"] = phase_accuracy
 
-    return total_loss / max(total, 1), correct / max(total, 1)
+    total_loss = total_phases_loss / len(test_loaders)
+    total_accuracy = total_correct / max(total_total, 1)
+    metrics_dict[f"accuracy"] = total_accuracy
+    return total_loss, metrics_dict
 
-def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, global_test_loader, device, wandb_enabled):
+def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, global_test_loaders, device, wandb_enabled):
     num_clients = len(train_loaders)
 
     print(f"\nCreating {num_clients} simulated clients...")
@@ -130,10 +143,22 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     waiting_interval = async_cfg["waiting_interval"]
     
 
-    initial_loss, initial_acc = evaluate_global_model(global_model, global_params, global_test_loader, device)
+    # Calculate Initial Metrics
+    phase_max_accs = [0.0] * num_phases
+    seen_phases = set()
+    current_global_phase = 0
+    initial_loss, initial_metrics = evaluate_global_model(global_model, global_params, global_test_loaders, device)
+    initial_phase_acc = [initial_metrics[f"phase{i}_accuracy]" for i in range(num_phases)] 
     
     if wandb_enabled:
-        wandb.log({"async/loss": initial_loss, "async/accuracy": initial_acc, "async/updates": 0, "async/elapsed_time": 0.0}, step=0)
+        log_dict = {
+            "async/loss": initial_loss,
+            "async/updates": 0,
+            "async/elapsed_time": 0.0
+        }
+        for k, v in initial_metrics.items():
+            log_dict[f"async/{k}"] = v
+        wandb.log(log_dict, step=0)
 
     start_time = time.time()
     end_time = start_time + total_train_time
@@ -190,7 +215,11 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
                 # Determine current phase based on wall-clock time
                 elapsed = time.time() - start_time
                 current_phase = min(int(elapsed / phase_duration), num_phases - 1)
-                
+                if current_phase > current_global_phase:
+                    print(f"\n{'='*50}")
+                    print(f"[Server] SHIFTING PHASE: Transitioning to Phase {current_phase} at t={elapsed:.1f}s")
+                    print(f"\n{'='*50}")                
+                    current_global_phase = current_phase
                 new_task = ray_actors[client_idx].fit.remote(params, time.time(), current_phase)
                 active_tasks[new_task] = client_idx
 
@@ -199,11 +228,35 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             eval_counter += 1
             with param_lock:
                 eval_params = parameters_to_ndarrays(current_params)
-            loss, acc = evaluate_global_model(global_model, eval_params, global_test_loader, device)
+            loss, metrics_dict = evaluate_global_model(global_model, eval_params, global_test_loaders, device)
+
+            # CL Math for Metrics
+            phase_accuracies = [metrics_dict[f"phase_{i}_accuracy"] for i in range(num_phases)]
+            seen_phase.add(current_global_phase)
+            phase_max_accs[current_global_phase] = max(phase_max_accs[current_global_phase], phase_accuracies[current_global_phase])
+            bwt, fwt = 0.0, 0.0
+            if current_global_phase > 0:
+                bwt = sum(phase_accuracies[p] - phase_max_accs[p] for p in range(current_global_phase)) / current_global_phase
+            if current_global_phase < num_phases - 1:
+                fwt = sum(phase_accuracies[p] - initial_phase_acc[p] for p in range(current_global_phase + 1, num_phases)) / (num_phases - current_global_phase -1)
+            avg_seen_acc = sum(phase_accuracies[p] for p in seen_phases) / len(seen_phases)
+
+            # Creating Log Dict
+            metrics_dict["bwt"] = bwt
+            metrics_dict["fwt"] = fwt
+            metrics_dict["avg_seen_acc"] = avg_seen_acc
+            
             print(f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: Loss: {loss:.4f}, Accuracy: {acc:.4f}\n")
             
             if wandb_enabled:
-                wandb.log({"async/loss": loss, "async/accuracy": acc, "async/updates": update_count, "async/elapsed_time": time.time() - start_time}, step=eval_counter)
+                log_dict = {
+                    "async/loss" = loss,
+                    "async/updates" = update_count,
+                    "async/elapsed_time": time.time() - start_time
+                }
+                for k, v in metrics_dict.items():
+                    log_dict[f"async/{k}"] = v
+                wandb.log(log_dict, step=eval_counter)
             last_eval_time = time.time()
 
     for actor in ray_actors.values():
@@ -212,7 +265,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 
     with param_lock:
         final_params = parameters_to_ndarrays(current_params)
-    final_loss, final_acc = evaluate_global_model(global_model, final_params, global_test_loader, device)
+    final_loss, final_acc = evaluate_global_model(global_model, final_params, global_test_loaders, device)
 
     return {
         "final_loss": final_loss,
