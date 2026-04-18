@@ -116,6 +116,7 @@ class SyncSimulatedClient(fl.client.NumPyClient):
 
         metrics = {
             "loss": avg_loss,
+            "client_id": self.cid
         }
 
         if client_prototype is not None:

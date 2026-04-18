@@ -29,7 +29,7 @@ class ContextAwareFedAvg(fl.server.strategy.FedAvg):
     def aggregate_fit(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes], BaseException]]) -> Tuple[Optional[fl.common.Parameters], Dict[str, fl.common.Scalar]]:
         print(f"\n--- Round {server_round} Context Analysis ---")
         for client_proxy, fit_res in results:
-            cid = client_proxy.cid
+            cid = fit_res.metrics.get("client_id")
             proto_str = fit_res.metrics.get("prototype", None)
             
             if proto_str is not None:
