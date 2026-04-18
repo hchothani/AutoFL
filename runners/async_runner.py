@@ -178,7 +178,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     def aggregate_result(client_idx: int, fit_res, phase_idx: int):
         nonlocal current_params, update_count, server_context_prototypes
         t_diff = time.time() - fit_res.metrics.get("start_timestamp", time.time())
-        incoming_proto_list = fet_res.metrics.get("prototype", None)
+        incoming_proto_list = fit_res.metrics.get("prototype", None)
 
         # Context Switching
         if incoming_proto_list is not None:
