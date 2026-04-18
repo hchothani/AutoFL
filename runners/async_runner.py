@@ -257,24 +257,36 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             inc_base, inc_lora = split_arrays(incoming_arrays, base_indices, lora_indices)
 
             # 2. Update the Global Base (Universal Knowledge)
+            old_base = parameters_to_ndarrays(global_base_params)
             base_strategy.total_samples = phase_total_samples[phase_idx]
             global_base_params = base_strategy.average(
                 global_base_params,
                 ndarrays_to_parameters(inc_base),
                 t_diff, fit_res.num_examples
             )
+            new_base = parameters_to_ndarrays(global_base_params)
+            base_shift = calculate_weight_shift(old_base, new_base)
 
             # 3. Update the Context Adapter (Domain Specialization)
+            lora_shift = 0.0
             if use_lora:
                 if assigned_context not in context_adapters:
                     # Initialize brand new adapter and strategy for a new context
                     context_adapters[assigned_context] = ndarrays_to_parameters(inc_lora)
                     context_strategies[assigned_context] = create_strategy(phase_total_samples[phase_idx])
+                    lora_shift = "INITIALIZED"
+                else:
+                    # --- TRACK LORA SHIFT ---
+                    old_lora = parameters_to_ndarrays(context_adapters[assigned_context])
+                    context_strategies[assigned_context].total_samples = phase_total_samples[phase_idx]
+                    context_adapters[assigned_context] = context_strategies[assigned_context].average(
+                        context_adapters[assigned_context], ndarrays_to_parameters(inc_lora), t_diff, fit_res.num_examples
+                    )
+                    new_lora = parameters_to_ndarrays(context_adapters[assigned_context])
+                    lora_shift = f"{calculate_weight_shift(old_lora, new_lora):.4f}"
+                
 
-                context_strategies[assigned_context].total_samples = phase_total_samples[phase_idx]
-                context_adapters[assigned_context] = context_strategies[assigned_context].average(
-                    context_adapters[assigned_context], ndarrays_to_parameters(inc_lora), t_diff, fit_res.num_examples
-                )
+                print(f"  [Weight Shift] Vehicle {client_idx} | Base: {base_shift:.4f} | LoRA {assigned_context}: {lora_shift}")
 
             update_count += 1
             
