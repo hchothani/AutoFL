@@ -1,7 +1,7 @@
 # utils/peft_utils.py
 
 from omegaconf import DictConfig
-from peft import get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model, LoraConfig
 
 def wrap_with_lora(base_model, cfg: DictConfig):
     """
@@ -23,7 +23,6 @@ def wrap_with_lora(base_model, cfg: DictConfig):
         
     # 2. Define the PEFT Config
     peft_config = LoraConfig(
-        task_type=TaskType.IMAGE_CLASSIFICATION, 
         inference_mode=False,
         r=r,
         lora_alpha=alpha,
