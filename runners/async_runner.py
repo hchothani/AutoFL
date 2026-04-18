@@ -18,11 +18,24 @@ from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
 
+# Used for Context -> Move to Utils when cleaning
 def calculate_cosine_distance(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     norm_a, norm_b = np.linalg.norm(vec_a), np.linalg.norm(vec_b)
     if norm_a == 0 or norm_b == 0: return 1.0 
     sim = np.dot(vec_a, vec_b) / (norm_a * norm_b)
     return 1.0 - sim
+
+# Used for LoRA -> Move to Utils when cleaning
+def split_arrays(flat_arrays: List[np.ndarray], base_idx: List[int], lora_idx: List[int]):
+    """Slices a flat list of network weights into Base weights and LoRA weights."""
+    return [flat_arrays[i] for i in base_idx], [flat_arrays[i] for i in lora_idx]
+
+def combine_arrays(base_arrays: List[np.ndarray], lora_arrays: List[np.ndarray], base_idx: List[int], lora_idx: List[int], total_len: int):
+    """Zips Base and LoRA weights back into a single flat list for the client."""
+    combined = [None] * total_len
+    for i, val in zip(base_idx, base_arrays): combined[i] = val
+    for i, val in zip(lora_idx, lora_arrays): combined[i] = val
+    return combined
 
 @ray.remote
 class AsyncRayClientActor:
@@ -121,9 +134,38 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     )
 
     global_model = model_fn().to(device)
+    global_keys = list(global_model.state_dict().keys())
     global_params = [val.cpu().numpy() for _, val in global_model.state_dict().items()]
 
-    # proto_enabled = cfg.get("context", {}).get("enabled", False)
+    # Identify which tensors are Base vs LoRA
+    base_indices = [i for i, k in enumerate(global_keys) if "lora" not in k]
+    lora_indices = [i for i, k in enumerate(global_keys) if "lora" in k]
+    use_lora = len(lora_indices) > 0  # Automatically detects if factory used PEFT
+    total_param_len = len(global_keys)
+
+    # --- 2. INITIALIZE STATE TRACKERS ---
+    global_arrays = [val.cpu().numpy() for _, val in global_model.state_dict().items()]
+    init_base, init_lora = split_arrays(global_arrays, base_indices, lora_indices)
+
+    global_base_params = ndarrays_to_parameters(init_base)
+    context_adapters = {0: ndarrays_to_parameters(init_lora)} if use_lora else {}
+    
+    # Helper to spawn independent strategy aggregators for Base and each Context
+    def create_strategy(samples, custom_alpha = None):
+        alpha = custom_alpha if custom_alpha is not None else async_cfg["fedasync_mixing_alpha"]
+        return AsynchronousStrategy(
+            total_samples=samples,
+            staleness_alpha=async_cfg["staleness_alpha"],
+            fedasync_mixing_alpha=alpha,
+            fedasync_a=async_cfg["fedasync_a"],
+            num_clients=num_clients,
+            async_aggregation_strategy=async_cfg["aggregation_strategy"],
+            use_staleness=async_cfg["use_staleness"],
+            use_sample_weighing=async_cfg["use_sample_weighing"]
+        )
+
+    param_lock = Lock()
+
     # Calculate Phase Timings
     total_train_time = async_cfg["total_train_time"]
     cl_enabled = cfg.get("cl", {}).get("enabled", False)
@@ -134,17 +176,21 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
         sum(len(loaders[p].dataset) for loaders in train_loaders)
         for p in range(num_phases)
     ]
+
+    base_strategy = create_strategy(phase_total_samples[0])
+    context_strategies = {0: create_strategy(phase_total_samples[0])} if use_lora else {}
     total_samples = sum(len(loaders[0].dataset) for loaders in train_loaders)
-    async_strategy = AsynchronousStrategy(
-        total_samples=phase_total_samples[0],
-        staleness_alpha=async_cfg["staleness_alpha"],
-        fedasync_mixing_alpha=async_cfg["fedasync_mixing_alpha"],
-        fedasync_a=async_cfg["fedasync_a"],
-        num_clients=num_clients,
-        async_aggregation_strategy=async_cfg["aggregation_strategy"],
-        use_staleness=async_cfg["use_staleness"],
-        use_sample_weighing=async_cfg["use_sample_weighing"],
-    )
+
+#    async_strategy = AsynchronousStrategy(
+#        total_samples=phase_total_samples[0],
+#        staleness_alpha=async_cfg["staleness_alpha"],
+#        fedasync_mixing_alpha=async_cfg["fedasync_mixing_alpha"],
+#        fedasync_a=async_cfg["fedasync_a"],
+#        num_clients=num_clients,
+#        async_aggregation_strategy=async_cfg["aggregation_strategy"],
+#        use_staleness=async_cfg["use_staleness"],
+#        use_sample_weighing=async_cfg["use_sample_weighing"],
+#    )
 
     # Variables for Prototypes
     server_context_prototypes = []
@@ -153,11 +199,9 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 
     history = AsyncHistory()
     param_lock = Lock()
-    current_params = ndarrays_to_parameters(global_params)
 
     total_train_time = async_cfg["total_train_time"]
     waiting_interval = async_cfg["waiting_interval"]
-    
 
     # Calculate Initial Metrics
     phase_max_accs = [0.0] * num_phases
@@ -206,11 +250,34 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
                         assigned_context = len(server_context_prototypes) - 1
                         print(f"  [Context Bank] Vehicle {client_idx} generated NEW Context {assigned_context} (Cos Dist: {min_dist:.3f})")
                 context_assignments[client_idx] = assigned_context
-        
+
         with param_lock:
-            async_strategy.total_samples = phase_total_samples[phase_idx]
-            current_params = async_strategy.average(current_params, fit_res.parameters, t_diff, fit_res.num_examples)
+            # 1. Unpack and slice incoming weights
+            incoming_arrays = parameters_to_ndarrays(fit_res.parameters)
+            inc_base, inc_lora = split_arrays(incoming_arrays, base_indices, lora_indices)
+
+            # 2. Update the Global Base (Universal Knowledge)
+            base_strategy.total_samples = phase_total_samples[phase_idx]
+            global_base_params = base_strategy.average(
+                global_base_params,
+                ndarrays_to_parameters(inc_base),
+                t_diff, fit_res.num_examples
+            )
+
+            # 3. Update the Context Adapter (Domain Specialization)
+            if use_lora:
+                if assigned_context not in context_adapters:
+                    # Initialize brand new adapter and strategy for a new context
+                    context_adapters[assigned_context] = ndarrays_to_parameters(inc_lora)
+                    context_strategies[assigned_context] = create_strategy(phase_total_samples[phase_idx])
+
+                context_strategies[assigned_context].total_samples = phase_total_samples[phase_idx]
+                context_adapters[assigned_context] = context_strategies[assigned_context].average(
+                    context_adapters[assigned_context], ndarrays_to_parameters(inc_lora), t_diff, fit_res.num_examples
+                )
+
             update_count += 1
+            
         return t_diff
 
     if not ray.is_initialized():
@@ -232,7 +299,16 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     # Command ALL actors to begin training
     for client_idx, actor in ray_actors.items():
         with param_lock:
-            params = current_params
+            # Safely zip the initial weights for Context 0
+            if use_lora:
+                combined = combine_arrays(
+                    parameters_to_ndarrays(global_base_params),
+                    parameters_to_ndarrays(context_adapters[0]),
+                    base_indices, lora_indices, total_param_len
+                )
+                params = ndarrays_to_parameters(combined)
+            else:
+                params = global_base_params
         task = actor.fit.remote(params, time.time(), current_phase=0)
         active_tasks[task] = client_idx
 
@@ -250,7 +326,18 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
             
             if time.time() < end_time:
                 with param_lock:
-                    params = current_params
+                    assigned_context = context_assignments.get(client_idx, 0)
+                    
+                    if use_lora:
+                        assigned_adapter = context_adapters.get(assigned_context, context_adapters[0])
+                        combined = combine_arrays(
+                            parameters_to_ndarrays(global_base_params),
+                            parameters_to_ndarrays(assigned_adapter),
+                            base_indices, lora_indices, total_param_len
+                        )
+                        params = ndarrays_to_parameters(combined)
+                    else:
+                        params = global_base_params
                 
                 # Determine current phase based on wall-clock time
                 elapsed = time.time() - start_time
@@ -262,12 +349,20 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
                     current_global_phase = current_phase
                 new_task = ray_actors[client_idx].fit.remote(params, time.time(), current_phase)
                 active_tasks[new_task] = client_idx
-
         # Evaluation Block
         if time.time() - last_eval_time >= waiting_interval:
             eval_counter += 1
             with param_lock:
-                eval_params = parameters_to_ndarrays(current_params)
+                if use_lora:
+                    latest_ctx = max(context_adapters.keys())
+                    combined_eval = combine_arrays(
+                        parameters_to_ndarrays(global_base_params),
+                        parameters_to_ndarrays(context_adapters[latest_ctx]),
+                        base_indices, lora_indices, total_param_len
+                    )
+                    eval_params = combined_eval
+                else:
+                    eval_params = parameters_to_ndarrays(global_base_params)
             loss, metrics_dict = evaluate_global_model(global_model, eval_params, global_test_loaders, device)
 
             # CL Math for Metrics
@@ -307,7 +402,15 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     ray.shutdown()    
 
     with param_lock:
-        final_params = parameters_to_ndarrays(current_params)
+        if use_lora:
+            latest_ctx = max(context_adapters.keys())
+            final_params = combine_arrays(
+                parameters_to_ndarrays(global_base_params),
+                parameters_to_ndarrays(context_adapters[latest_ctx]),
+                base_indices, lora_indices, total_param_len
+            )
+        else:
+            final_params = parameters_to_ndarrays(global_base_params)
     final_loss, final_metrics = evaluate_global_model(global_model, final_params, global_test_loaders, device)
 
     return {

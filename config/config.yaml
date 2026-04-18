@@ -28,6 +28,20 @@ cl:
 model:
   name: simple_cnn
 
+context:
+  enabled: false
+
+lora:
+  enabled: false
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - "fc"
+    - "linear"
+    - "classifier"
+    - "Conv2d"
+
 dataset:
   workload: cifar10
   split: iid

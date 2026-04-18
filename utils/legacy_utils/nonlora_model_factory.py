@@ -4,8 +4,6 @@ import inspect
 from omegaconf import DictConfig
 from models import get_model_class
 
-from utils.peft_utils import wrap_with_lora
-
 def validate_config(cfg: DictConfig):
     """Ensure the config has the minimum required parameters."""
     if "model" not in cfg or "name" not in cfg.model:
@@ -22,7 +20,6 @@ def create_model(cfg: DictConfig):
     num_classes = cfg.dataset.get("num_classes", 10)
     in_channels = cfg.dataset.get("in_channels", 3)
     input_size = cfg.dataset.get("input_size", 32)
-    lora_enabled = cfg.dataset.get("lora", {}).get("enabled", False)
     
     # 2. Get the blueprint function/class from our registry
     ModelConstructor = get_model_class(model_name)
@@ -45,15 +42,10 @@ def create_model(cfg: DictConfig):
     
     # 5. Build and return the model safely
     try:
-        base_model = ModelConstructor(**valid_kwargs)
-        if lora_enabled:
-            final_model = wrap_with_lora(base_model, cfg)
-            return final_model
-        else:
-            return base_model
+        model_instance = ModelConstructor(**valid_kwargs)
+        return model_instance
     except Exception as e:
         raise RuntimeError(f"Failed to instantiate model '{model_name}': {e}")
-
 
 def get_model_fn(cfg: DictConfig):
     """
