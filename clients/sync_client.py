@@ -1,5 +1,6 @@
 import time
 import random
+import json
 
 import flwr as fl
 import torch
@@ -115,8 +116,10 @@ class SyncSimulatedClient(fl.client.NumPyClient):
 
         metrics = {
             "loss": avg_loss,
-            "prototype": client_prototype
         }
+
+        if client_prototype is not None:
+            metrics["prototype"] = json.dumps(client_prototype)
         
         return self.get_parameters(config={}), num_examples, metrics
 

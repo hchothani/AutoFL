@@ -3,6 +3,7 @@ import collections.abc
 collections.Sequence = collections.abc.Sequence
 
 import time
+import json
 from typing import Dict, Optional, Tuple, List, Union
 import numpy as np
 
@@ -29,10 +30,10 @@ class ContextAwareFedAvg(fl.server.strategy.FedAvg):
         print(f"\n--- Round {server_round} Context Analysis ---")
         for client_proxy, fit_res in results:
             cid = client_proxy.cid
-            proto_list = fit_res.metrics.get("prototype", None)
+            proto_str = fit_res.metrics.get("prototype", None)
             
-            if proto_list is not None:
-                incoming_proto = np.array(proto_list)
+            if proto_str is not None:
+                incoming_proto = np.array(json.loads(proto_str))
                 if len(self.server_context_prototypes) == 0:
                     self.server_context_prototypes.append(incoming_proto)
                     assigned_context = 0
@@ -45,6 +46,7 @@ class ContextAwareFedAvg(fl.server.strategy.FedAvg):
                     if min_dist < self.context_distance_threshold:
                         self.server_context_prototypes[closest_idx] = (0.9 * self.server_context_prototypes[closest_idx]) + (0.1 * incoming_proto)
                         assigned_context = closest_idx
+                        print(f" [Context Bank] Vehicle {cid} assigned Context {assigned_context}")
                     else:
                         self.server_context_prototypes.append(incoming_proto)
                         assigned_context = len(self.server_context_prototypes) - 1
