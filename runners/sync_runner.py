@@ -12,6 +12,48 @@ import wandb
 
 from clients.sync_client import SyncSimulatedClient
 
+def calculate_cosine_distance(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+    norm_a, norm_b = np.linalg.norm(vec_a), np.linalg.norm(vec_b)
+    if norm_a == 0 or norm_b == 0: return 1.0 
+    sim = np.dot(vec_a, vec_b) / (norm_a * norm_b)
+    return 1.0 - sim
+
+class ContextAwareFedAvg(fl.server.strategy.FedAvg):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.server_context_prototypes = []
+        self.context_distance_threshold = 0.15 
+        self.context_assignments = {}
+
+    def aggregate_fit(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes], BaseException]]) -> Tuple[Optional[fl.common.Parameters], Dict[str, fl.common.Scalar]]:
+        print(f"\n--- Round {server_round} Context Analysis ---")
+        for client_proxy, fit_res in results:
+            cid = client_proxy.cid
+            proto_list = fit_res.metrics.get("prototype", None)
+            
+            if proto_list is not None:
+                incoming_proto = np.array(proto_list)
+                if len(self.server_context_prototypes) == 0:
+                    self.server_context_prototypes.append(incoming_proto)
+                    assigned_context = 0
+                    print(f"  [Context Bank] Vehicle {cid} established Initial Context 0.")
+                else:
+                    distances = [calculate_cosine_distance(incoming_proto, p) for p in self.server_context_prototypes]
+                    min_dist = min(distances)
+                    closest_idx = distances.index(min_dist)
+
+                    if min_dist < self.context_distance_threshold:
+                        self.server_context_prototypes[closest_idx] = (0.9 * self.server_context_prototypes[closest_idx]) + (0.1 * incoming_proto)
+                        assigned_context = closest_idx
+                    else:
+                        self.server_context_prototypes.append(incoming_proto)
+                        assigned_context = len(self.server_context_prototypes) - 1
+                        print(f"  [Context Bank] Vehicle {cid} generated NEW Context {assigned_context} (Cos Dist: {min_dist:.3f})")
+                
+                self.context_assignments[cid] = assigned_context
+        
+        return super().aggregate_fit(server_round, results, failures)
+
 def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_loaders, device, wandb_enabled):
     """Pure synchronous FL execution loop using standard Flower logic."""
     num_rounds = cfg.server.num_rounds
@@ -119,7 +161,7 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         return {"current_phase": current_phase}
 
     # 2. Strategy Initialization
-    strategy = fl.server.strategy.FedAvg(
+    strategy = ContextAwareFedAvg(
         fraction_fit=cfg.server.fraction_fit,
         min_fit_clients=cfg.server.min_fit,
         min_available_clients=num_clients,

@@ -66,11 +66,59 @@ class SyncSimulatedClient(fl.client.NumPyClient):
 
         avg_loss = total_loss / max(1, len(active_train_loader) * self.cfg.client.local_epochs)
 
+        self.model.eval() # Lock weights and batch norm
+        
+        feature_sum = None
+        feature_count = 0
+        
+        def feature_hook(module, input, output):
+            nonlocal feature_sum, feature_count
+            # input[0] shape: (batch_size, feature_dim)
+            batch_features = input[0].detach().cpu().numpy()
+            
+            if feature_sum is None:
+                feature_sum = np.sum(batch_features, axis=0)
+            else:
+                feature_sum += np.sum(batch_features, axis=0)
+            feature_count += batch_features.shape[0]
+
+        # Attach Hook
+        last_linear_layer = None
+        for module in self.model.modules():
+            if isinstance(module, torch.nn.Linear): last_linear_layer = module
+        if last_linear_layer is None: last_linear_layer = list(self.model.children())[-1]
+            
+        hook_handle = last_linear_layer.register_forward_hook(feature_hook)
+
+        # Single rapid forward pass without gradients
+        try:
+            with torch.no_grad():
+                for batch in active_train_loader:
+                    if isinstance(batch, dict):
+                        images = batch.get("img", batch.get("x")).to(self.device)
+                    elif isinstance(batch, (tuple, list)):
+                        images = batch[0].to(self.device)
+                    else: continue
+                    _ = self.model(images)
+        finally:
+            hook_handle.remove() # Always clean up
+
+        # Calculate perfect centroid
+        if feature_count > 0:
+            client_prototype = (feature_sum / feature_count).tolist()
+        else:
+            client_prototype = None
+
         if self.simulate_delay:
             upload_delay = random.uniform(self.min_delay/2.0, self.max_delay /2.0)
             time.sleep(upload_delay)
+
+        metrics = {
+            "loss": avg_loss,
+            "prototype": client_prototype
+        }
         
-        return self.get_parameters(config={}), num_examples, {"loss": avg_loss}
+        return self.get_parameters(config={}), num_examples, metrics
 
     def evaluate(self, parameters: List[np.ndarray], config: Dict) -> Tuple[float, int, Dict]:
         current_phase = config.get("current_phase", 0)

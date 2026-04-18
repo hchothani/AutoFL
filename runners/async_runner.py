@@ -32,7 +32,10 @@ class AsyncRayClientActor:
         
     def fit(self, params, start_timestamp, current_phase):
         from flwr.common import FitIns
-        config = {"start_timestamp": start_timestamp, "current_phase": current_phase}
+        config = {
+            "start_timestamp": start_timestamp,
+            "current_phase": current_phase
+        }
         fit_res = self.client.fit(FitIns(parameters=params, config=config))
         return self.client_idx, fit_res, current_phase
 
@@ -120,6 +123,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     global_model = model_fn().to(device)
     global_params = [val.cpu().numpy() for _, val in global_model.state_dict().items()]
 
+    # proto_enabled = cfg.get("context", {}).get("enabled", False)
     # Calculate Phase Timings
     total_train_time = async_cfg["total_train_time"]
     cl_enabled = cfg.get("cl", {}).get("enabled", False)
