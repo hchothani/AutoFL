@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import json
 import random
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -73,7 +74,7 @@ class SimulatedAsyncClient(ClientProxy):
         active_train_loader = self.train_loaders[current_phase]
         num_examples = len(active_train_loader.dataset)
 
-        print(f" -> [Vehicle {self.cid}] Async Trigger: Phase {current_phase} training on {num_examples} images.")
+        # print(f" -> [Vehicle {self.cid}] Async Trigger: Phase {current_phase} training on {num_examples} images.")
 
         if self.config.simulate_delay:
             download_delay = random.uniform(self.config.min_delay / 2, self.config.max_delay / 2)
@@ -163,17 +164,21 @@ class SimulatedAsyncClient(ClientProxy):
         new_params = [val.cpu().numpy() for _, val in self.model.state_dict().items()]
         elapsed = time.time() - start_time
 
-        return FitRes(
-            status=Status(code=Code.OK, message="Success"),
-            parameters=ndarrays_to_parameters(new_params),
-            num_examples=num_examples,
-            metrics={
+        metrics={
                 "loss": avg_loss,
                 "training_time": elapsed,
                 "start_timestamp": ins.config.get("start_timestamp", start_time),
                 "client_id": self.cid,
-                "client_prototype": client_prototype
-            },
+        }
+
+        if client_prototype is not None:
+            metrics["prototype"] = json.dumps(client_prototype)
+
+        return FitRes(
+            status=Status(code=Code.OK, message="Success"),
+            parameters=ndarrays_to_parameters(new_params),
+            num_examples=num_examples,
+            metrics=metrics
         )
 
     def evaluate(self, ins: EvaluateIns, timeout: Optional[float] = None) -> EvaluateRes:

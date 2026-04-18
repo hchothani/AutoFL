@@ -3,6 +3,7 @@ import collections.abc
 collections.Sequence = collections.abc.Sequence
 
 import time
+import json
 from concurrent.futures import ThreadPoolExecutor
 import ray
 from threading import Lock
@@ -178,11 +179,11 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     def aggregate_result(client_idx: int, fit_res, phase_idx: int):
         nonlocal current_params, update_count, server_context_prototypes
         t_diff = time.time() - fit_res.metrics.get("start_timestamp", time.time())
-        incoming_proto_list = fit_res.metrics.get("prototype", None)
+        proto_str = fit_res.metrics.get("prototype", None)
 
         # Context Switching
-        if incoming_proto_list is not None:
-            incoming_proto = np.array(incoming_proto_list)
+        if proto_str is not None:
+            incoming_proto = np.array(json.loads(proto_str))
             with param_lock:
                 if len(server_context_prototypes) == 0:
                     server_context_prototypes.append(incoming_proto)
