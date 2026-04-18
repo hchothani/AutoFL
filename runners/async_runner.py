@@ -81,11 +81,11 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
         "max_delay": async_cfg.get("max_delay", 3.0),
     }
 
-def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test_loaders: List[DataLoader], device: torch.device) -> tuple[float, float]:
-    state_dict = model.state_dict()
-    for key, param in zip(state_dict.keys(), params):
-        state_dict[key] = torch.tensor(param).to(device)
-    model.load_state_dict(state_dict)
+def evaluate_global_model(model: torch.nn.Module, phase_params_dict: List[np.ndarray], test_loaders: List[DataLoader], device: torch.device) -> tuple[float, float]:
+    # state_dict = model.state_dict()
+    # for key, param in zip(state_dict.keys(), params):
+    #     state_dict[key] = torch.tensor(param).to(device)
+    # model.load_state_dict(state_dict)
 
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
@@ -95,6 +95,19 @@ def evaluate_global_model(model: torch.nn.Module, params: List[np.ndarray], test
     metrics_dict = {}
 
     for phase_idx, phase_loader in enumerate(test_loaders):
+        # Dynamic Adapter Loading
+        # Fetch Specific Weights for this phase
+        # If testing a future phase, fallback to latest available adapter
+        params = phase_params_dict.get(phase_idx)
+        if params is None:
+            latest_idx = max(phase_params_dict.keys())
+            params = phase_params_dict[latest_idx]
+
+        state_dict = model.state_dict()
+        for key, param in zip(state_dict.keys(), params):
+            state_dict[key] = torch.tensor(param).to(device)
+        model.load_state_dict(state_dict)
+        # -------------------------------
         phase_loss, correct, total = 0.0, 0, 0
         with torch.no_grad():
             for batch in phase_loader:
@@ -370,18 +383,23 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
         # Evaluation Block
         if time.time() - last_eval_time >= waiting_interval:
             eval_counter += 1
+            eval_params_dict = {}
             with param_lock:
                 if use_lora:
-                    latest_ctx = max(context_adapters.keys())
-                    combined_eval = combine_arrays(
-                        parameters_to_ndarrays(global_base_params),
-                        parameters_to_ndarrays(context_adapters[latest_ctx]),
-                        base_indices, lora_indices, total_param_len
-                    )
-                    eval_params = combined_eval
+                    for p_idx in range(num_phases):
+                        # If an adapter exists for this phase, use it. Otherwise, use the latest.
+                        adapter_idx = p_idx if p_idx in context_adapters else max(context_adapters.keys())
+                        combined_eval = combine_arrays(
+                            parameters_to_ndarrays(global_base_params),
+                            parameters_to_ndarrays(context_adapters[adapter_idx]),
+                            base_indices, lora_indices, total_param_len
+                        )
+                        eval_params_dict[p_idx] = combined_eval
                 else:
-                    eval_params = parameters_to_ndarrays(global_base_params)
-            loss, metrics_dict = evaluate_global_model(global_model, eval_params, global_test_loaders, device)
+                    for p_idx in range(num_phases):
+                        eval_params_dict[p_idx] = parameters_to_ndarrays(global_base_params)
+            # --------------------------------------------
+            loss, metrics_dict = evaluate_global_model(global_model, eval_params_dict, global_test_loaders, device)
 
             # CL Math for Metrics
             phase_accuracies = [metrics_dict[f"phase_{i}_accuracy"] for i in range(num_phases)]
@@ -419,17 +437,20 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
         ray.kill(actor)
     ray.shutdown()    
 
+    final_params_dict = {}
     with param_lock:
         if use_lora:
-            latest_ctx = max(context_adapters.keys())
-            final_params = combine_arrays(
-                parameters_to_ndarrays(global_base_params),
-                parameters_to_ndarrays(context_adapters[latest_ctx]),
-                base_indices, lora_indices, total_param_len
-            )
+            for p_idx in range(num_phases):
+                adapter_idx = p_idx if p_idx in context_adapters else max(context_adapters.keys())
+                final_params_dict[p_idx] = combine_arrays(
+                    parameters_to_ndarrays(global_base_params),
+                    parameters_to_ndarrays(context_adapters[adapter_idx]),
+                    base_indices, lora_indices, total_param_len
+                )
         else:
-            final_params = parameters_to_ndarrays(global_base_params)
-    final_loss, final_metrics = evaluate_global_model(global_model, final_params, global_test_loaders, device)
+            for p_idx in range(num_phases):
+                final_params_dict[p_idx] = parameters_to_ndarrays(global_base_params)
+    final_loss, final_metrics = evaluate_global_model(global_model, final_params_dict, global_test_loaders, device)
 
     return {
         "final_loss": final_loss,

@@ -73,6 +73,8 @@ wb:
     - "dataset.workload"
     - "model.name"
     - "async.enabled"
+    - "context.enabled"
+    - "lora.enabled"
 
 latency:
   enabled: true
