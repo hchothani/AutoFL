@@ -22,7 +22,7 @@ def create_model(cfg: DictConfig):
     num_classes = cfg.dataset.get("num_classes", 10)
     in_channels = cfg.dataset.get("in_channels", 3)
     input_size = cfg.dataset.get("input_size", 32)
-    lora_enabled = cfg.dataset.get("lora", {}).get("enabled", False)
+    lora_enabled = cfg.lora.get("enabled", False)
     
     # 2. Get the blueprint function/class from our registry
     ModelConstructor = get_model_class(model_name)
