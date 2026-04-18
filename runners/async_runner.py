@@ -37,6 +37,12 @@ def combine_arrays(base_arrays: List[np.ndarray], lora_arrays: List[np.ndarray],
     for i, val in zip(lora_idx, lora_arrays): combined[i] = val
     return combined
 
+# To Prove or Show LoRA -> Move to utils when cleaning
+def calculate_weight_shift(old_params_list, new_params_list):
+    """Calculates the absolute L1 norm difference between two sets of weights."""
+    shift = sum(np.sum(np.abs(old - new)) for old, new in zip(old_params_list, new_params_list))
+    return shift
+
 @ray.remote
 class AsyncRayClientActor:
     def __init__(self, client_idx, client_obj):
@@ -225,7 +231,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     update_count = 0
 
     def aggregate_result(client_idx: int, fit_res, phase_idx: int):
-        nonlocal current_params, update_count, server_context_prototypes
+        nonlocal global_base_params, update_count, server_context_prototypes
         t_diff = time.time() - fit_res.metrics.get("start_timestamp", time.time())
         proto_str = fit_res.metrics.get("prototype", None)
 
