@@ -143,7 +143,7 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
 
     # Variables for Prototypes
     server_context_prototypes = []
-    context_distance_threshold = cfg.get(prototypes, {}).get("threshold", 0.15)
+    context_distance_threshold = cfg.get("context", {}).get("threshold", 0.15)
     context_assignments = {}
 
     history = AsyncHistory()
