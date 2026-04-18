@@ -123,7 +123,7 @@ class SimulatedAsyncClient(ClientProxy):
             # input[0] shape: (batch_size, feature_dim)
             batch_features = input[0].detach().cpu().numpy()
 
-            if feature_sum is None
+            if feature_sum is None:
                 feature_sum = np.sum(batch_features, axis=0)
             else:
                 feature_sum += np.sum(batch_features, axis=0)
