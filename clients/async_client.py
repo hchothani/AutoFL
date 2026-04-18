@@ -115,7 +115,7 @@ class SimulatedAsyncClient(ClientProxy):
         # Prototype Extraction (Post-Training)
         self.model.eval()
 
-        features_sum = None
+        feature_sum = None
         feature_count = 0
 
         def feature_hook(module, input, output):
