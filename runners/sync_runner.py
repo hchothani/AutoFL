@@ -3,7 +3,7 @@ import collections.abc
 collections.Sequence = collections.abc.Sequence
 
 import time
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Union
 import numpy as np
 
 import flwr as fl
