@@ -196,8 +196,8 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
         for p in range(num_phases)
     ]
 
-    base_strategy = create_strategy(phase_total_samples[0])
-    context_strategies = {0: create_strategy(phase_total_samples[0])} if use_lora else {}
+    base_strategy = create_strategy(phase_total_samples[0], 0.1)
+    context_strategies = {0: create_strategy(phase_total_samples[0], 0.9)} if use_lora else {}
     total_samples = sum(len(loaders[0].dataset) for loaders in train_loaders)
 
 #    async_strategy = AsynchronousStrategy(
