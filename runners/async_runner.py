@@ -17,6 +17,12 @@ from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
 
+def calculate_cosine_distance(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+    norm_a, norm_b = np.linalg.norm(vec_a), np.linalg.norm(vec_b)
+    if norm_a == 0 or norm_b == 0: return 1.0 
+    sim = np.dot(vec_a, vec_b) / (norm_a * norm_b)
+    return 1.0 - sim
+
 @ray.remote
 class AsyncRayClientActor:
     def __init__(self, client_idx, client_obj):
@@ -135,6 +141,11 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
         use_sample_weighing=async_cfg["use_sample_weighing"],
     )
 
+    # Variables for Prototypes
+    server_context_prototypes = []
+    context_distance_threshold = cfg.get(prototypes, {}).get("threshold", 0.15)
+    context_assignments = {}
+
     history = AsyncHistory()
     param_lock = Lock()
     current_params = ndarrays_to_parameters(global_params)
@@ -165,8 +176,32 @@ def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, 
     update_count = 0
 
     def aggregate_result(client_idx: int, fit_res, phase_idx: int):
-        nonlocal current_params, update_count
+        nonlocal current_params, update_count, server_context_prototypes
         t_diff = time.time() - fit_res.metrics.get("start_timestamp", time.time())
+        incoming_proto_list = fet_res.metrics.get("prototype", None)
+
+        # Context Switching
+        if incoming_proto_list is not None:
+            incoming_proto = np.array(incoming_proto_list)
+            with param_lock:
+                if len(server_context_prototypes) == 0:
+                    server_context_prototypes.append(incoming_proto)
+                    assigned_context = 0
+                    print(f"  [Context Bank] Vehicle {client_idx} established Initial Context 0.")
+                else:
+                    distances = [calculate_cosine_distance(incoming_proto, p) for p in server_context_prototypes]
+                    min_dist = min(distances)
+                    closest_idx = distances.index(min_dist)
+                    if min_dist < context_distance_threshold:
+                        server_context_prototypes[closest_idx] = (0.9 * server_context_prototypes[closest_idx]) + (0.1 * incoming_proto)
+                        assigned_context = closest_idx
+                        print(f"  [Context Bank] Vehicle {client_idx} assigned Context {assigned_context}")
+                    else:
+                        server_context_prototypes.append(incoming_proto)
+                        assigned_context = len(server_context_prototypes) - 1
+                        print(f"  [Context Bank] Vehicle {client_idx} generated NEW Context {assigned_context} (Cos Dist: {min_dist:.3f})")
+                context_assignments[client_idx] = assigned_context
+        
         with param_lock:
             async_strategy.total_samples = phase_total_samples[phase_idx]
             current_params = async_strategy.average(current_params, fit_res.parameters, t_diff, fit_res.num_examples)

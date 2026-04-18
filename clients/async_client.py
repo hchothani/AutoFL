@@ -73,6 +73,8 @@ class SimulatedAsyncClient(ClientProxy):
         active_train_loader = self.train_loaders[current_phase]
         num_examples = len(active_train_loader.dataset)
 
+        print(f" -> [Vehicle {self.cid}] Async Trigger: Phase {current_phase} training on {num_examples} images.")
+
         if self.config.simulate_delay:
             download_delay = random.uniform(self.config.min_delay / 2, self.config.max_delay / 2)
             time.sleep(download_delay)
@@ -110,6 +112,50 @@ class SimulatedAsyncClient(ClientProxy):
 
         avg_loss = total_loss / max(num_batches, 1)
 
+        # Prototype Extraction (Post-Training)
+        self.model.eval()
+
+        features_sum = None
+        feature_count = 0
+
+        def feature_hook(module, input, output):
+            nonlocal feature_sum, feature_count
+            # input[0] shape: (batch_size, feature_dim)
+            batch_features = input[0].detach().cpu().numpy()
+
+            if feature_sum is None
+                feature_sum = np.sum(batch_features, axis=0)
+            else:
+                feature_sum += np.sum(batch_features, axis=0)
+            feature_count += batch_features.shape[0]
+
+        # Attach Hook
+        last_linear_layer = None
+        for module in self.model.modules():
+            if isinstance(module, torch.nn.Linear): last_linear_layer = module
+        if last_linear_layer is None: last_linear_layer = list(self.model.children())[-1]
+            
+        hook_handle = last_linear_layer.register_forward_hook(feature_hook)
+
+        # Single Rapid Forward Pass without gradients
+        try:
+            with torch.no_grad():
+                for batch in active_train_loader:
+                    if isinstance(batch, dict):
+                        images = batch.get("img", batch.get("x")).to(self.device)
+                    elif isinstance(batch, (tuple, list)):
+                        images = batch[0].to(self.device)
+                    else: continue
+                    _ = self.model(images)
+        finally:
+            hook_handle.remove() # Always clean up
+
+        # Calculate perfect centroid
+        if feature_count > 0:
+            client_prototype = (feature_sum / feature_count).tolist()
+        else:
+            client_prototype = None
+
         if self.config.simulate_delay:
             upload_delay = random.uniform(self.config.min_delay / 2, self.config.max_delay / 2)
             time.sleep(upload_delay)
@@ -126,6 +172,7 @@ class SimulatedAsyncClient(ClientProxy):
                 "training_time": elapsed,
                 "start_timestamp": ins.config.get("start_timestamp", start_time),
                 "client_id": self.cid,
+                "client_prototype": client_prototype
             },
         )
 
