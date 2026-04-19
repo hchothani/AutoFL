@@ -87,6 +87,8 @@ def evaluate_global_model(model: torch.nn.Module, phase_params_dict: List[np.nda
     #     state_dict[key] = torch.tensor(param).to(device)
     # model.load_state_dict(state_dict)
 
+    original_state = {k : v.clone() for k, v in model.state_dict().items()}
+
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
     total_phases_loss = 0.0
@@ -94,45 +96,47 @@ def evaluate_global_model(model: torch.nn.Module, phase_params_dict: List[np.nda
     total_total = 0
     metrics_dict = {}
 
-    for phase_idx, phase_loader in enumerate(test_loaders):
-        # Dynamic Adapter Loading
-        # Fetch Specific Weights for this phase
-        # If testing a future phase, fallback to latest available adapter
-        params = phase_params_dict.get(phase_idx)
-        if params is None:
-            latest_idx = max(phase_params_dict.keys())
-            params = phase_params_dict[latest_idx]
+    try:
+        for phase_idx, phase_loader in enumerate(test_loaders):
+            # Dynamic Adapter Loading
+            # Fetch Specific Weights for this phase
+            # If testing a future phase, fallback to latest available adapter
+            params = phase_params_dict.get(phase_idx)
+            if params is None:
+                latest_idx = max(phase_params_dict.keys())
+                params = phase_params_dict[latest_idx]
 
-        state_dict = model.state_dict()
-        for key, param in zip(state_dict.keys(), params):
-            state_dict[key] = torch.tensor(param).to(device)
-        model.load_state_dict(state_dict)
-        # -------------------------------
-        phase_loss, correct, total = 0.0, 0, 0
-        with torch.no_grad():
-            for batch in phase_loader:
-                if isinstance(batch, dict):
-                    images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
-                elif isinstance(batch, (tuple, list)):
-                    images, labels = batch[0].to(device), batch[1].to(device)
-                else:
-                    continue
+            state_dict = model.state_dict()
+            for key, param in zip(state_dict.keys(), params):
+                state_dict[key] = torch.tensor(param).to(device)
+            model.load_state_dict(state_dict)
+            # -------------------------------
+            phase_loss, correct, total = 0.0, 0, 0
+            with torch.no_grad():
+                for batch in phase_loader:
+                    if isinstance(batch, dict):
+                        images, labels = batch.get("img", batch.get("x")).to(device), batch.get("label", batch.get("y")).to(device)
+                    elif isinstance(batch, (tuple, list)):
+                        images, labels = batch[0].to(device), batch[1].to(device)
+                    else:
+                        continue
 
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                phase_loss += loss.item() * labels.size(0)
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-        total_total += total
-        total_correct += correct
-        phase_accuracy = correct / max(total, 1)
-        total_phases_loss += phase_loss / max(total, 1)
-        metrics_dict[f"phase_{phase_idx}_accuracy"] = phase_accuracy
-
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+                    phase_loss += loss.item() * labels.size(0)
+                    _, predicted = outputs.max(1)
+                    total += labels.size(0)
+                    correct += predicted.eq(labels).sum().item()
+            total_total += total
+            total_correct += correct
+            phase_accuracy = correct / max(total, 1)
+            total_phases_loss += phase_loss / max(total, 1)
+            metrics_dict[f"phase_{phase_idx}_accuracy"] = phase_accuracy
+    finally:
+        model.load_state_dict(original_state)
     total_loss = total_phases_loss / len(test_loaders)
     total_accuracy = total_correct / max(total_total, 1)
-    metrics_dict[f"accuracy"] = total_accuracy
+    metrics_dict["accuracy"] = total_accuracy
     return total_loss, metrics_dict
 
 def run_async_simulation(cfg, async_cfg, model_fn, train_loaders, test_loaders, global_test_loaders, device, wandb_enabled):
