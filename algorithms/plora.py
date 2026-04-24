@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import copy
 import collections
 import math
+import flwr as fl
 
 class LoRALinear(nn.Module):
     def __init__(self, base_layer: nn.Linear, rank: int = 4, alpha: float = 1.0):
@@ -45,6 +46,39 @@ def inject_lora(model, rank=4, alpha=1.0, _prefix=''):
             inject_lora(module, rank=rank, alpha=alpha, _prefix=full_name)
     return model
 
+<<<<<<< Updated upstream
+=======
+
+def get_lora_parameter_keys(model: nn.Module) -> List[str]:
+    """Return state_dict keys corresponding to LoRA tensors only."""
+    return [k for k, _ in model.state_dict().items() if "lora_" in k]
+
+
+def get_lora_parameters(model: nn.Module) -> List:
+    """Extract LoRA tensors as a list of NumPy arrays for Flower transport."""
+    keys = get_lora_parameter_keys(model)
+    state_dict = model.state_dict()
+    return [state_dict[k].cpu().numpy() for k in keys]
+
+
+def set_lora_parameters(model: nn.Module, parameters: List) -> None:
+    """Load LoRA tensors into model using state_dict keys order."""
+    keys = get_lora_parameter_keys(model)
+    params_dict = zip(keys, parameters)
+    state_dict = {k: torch.tensor(v) for k, v in params_dict}
+    model.load_state_dict(state_dict, strict=False)
+
+
+class FlowerPLoRAStrategy(fl.server.strategy.FedAvg):
+    """Minimal Flower-native PLoRA strategy.
+
+    Aggregation is standard FedAvg; client/server code decides to exchange only LoRA parameters.
+    """
+
+    pass
+
+
+>>>>>>> Stashed changes
 class PLoRAStrategy:
     def __init__(self, model: nn.Module, plora_config: Dict[str, Any], num_clients: int = 2, **kwargs):
         self.rank = plora_config.get('rank', 4)

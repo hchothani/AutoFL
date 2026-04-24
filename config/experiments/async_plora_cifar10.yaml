@@ -1,0 +1,52 @@
+defaults:
+  - ../config
+
+model:
+  name: simple_cnn
+  num_classes: 10
+  pretrained: false
+
+dataset:
+  workload: cifar10
+
+server:
+  num_clients: 3
+  num_rounds: 10
+  fraction_fit: 1.0
+  fraction_eval: 1.0
+  min_fit: 3 #5
+  min_eval: 3 #5
+  strategy: fedavg
+
+client:
+  num_cpus: 2
+  num_gpus: 0.2
+  max_concurrency: null #2
+  local_epochs: 3
+  learning_rate: 0.01
+
+async:
+  enabled: true
+  total_train_time: 120
+  waiting_interval: 10
+  max_workers: 2 #4
+  aggregation_strategy: plora
+  staleness_alpha: 0.5
+  fedasync_mixing_alpha: 0.9
+  fedasync_a: 0.5
+  use_staleness: true
+  use_sample_weighing: true
+  send_gradients: false
+  server_artificial_delay: false
+  simulate_delay: true
+  min_delay: 0.5
+  max_delay: 3.0
+  strategy_params:
+    rank: 4
+    alpha: 1.0
+    model_init_seed: 42
+
+wb:
+  enabled: true
+  name: async_plora_cifar10
+  project: autofl-async
