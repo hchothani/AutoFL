@@ -10,6 +10,11 @@ import flwr as fl
 import torch
 import wandb
 
+from algorithms.plora import (
+    FlowerPLoRAStrategy,
+    inject_lora,
+    set_lora_parameters,
+)
 from clients.sync_client import SyncSimulatedClient
 
 def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_loaders, device, wandb_enabled):
@@ -29,12 +34,27 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
 
     start_time = time.time()
 
+    if wandb_enabled:
+        wandb.define_metric("sync/round")
+        wandb.define_metric("sync/accuracy", step_metric="sync/round")
+        wandb.define_metric("sync/loss", step_metric="sync/round")
+
     # 1. Centralized Evaluator
     def evaluate_fn(server_round: int, parameters: fl.common.NDArrays, config: Dict) -> Optional[Tuple[float, Dict]]:
-        model = model_fn().to(device)
-        params_dict = zip(model.state_dict().keys(), parameters)
-        state_dict = {k: torch.tensor(v) for k, v in params_dict}
-        model.load_state_dict(state_dict, strict=True)
+        model = model_fn()
+        is_plora = str(cfg.server.strategy).lower() == "plora"
+        if is_plora:
+            plora_cfg = cfg.get("plora", {})
+            rank = plora_cfg.get("rank", 4)
+            alpha = plora_cfg.get("alpha", 1.0)
+            model = inject_lora(model, rank=rank, alpha=alpha)
+            set_lora_parameters(model, parameters)
+        else:
+            params_dict = zip(model.state_dict().keys(), parameters)
+            state_dict = {k: torch.tensor(v) for k, v in params_dict}
+            model.load_state_dict(state_dict, strict=True)
+
+        model = model.to(device)
 
         current_phase = 0 if server_round == 0 else min((server_round - 1) // rounds_per_phase, num_phases - 1)
         
@@ -119,14 +139,24 @@ def run_sync_simulation(cfg, model_fn, train_loaders, test_loaders, global_test_
         return {"current_phase": current_phase}
 
     # 2. Strategy Initialization
-    strategy = fl.server.strategy.FedAvg(
-        fraction_fit=cfg.server.fraction_fit,
-        min_fit_clients=cfg.server.min_fit,
-        min_available_clients=num_clients,
-        evaluate_fn=evaluate_fn,
-        on_fit_config_fn=on_fit_config_fn,
-        on_evaluate_config_fn=on_fit_config_fn
-    )
+    if str(cfg.server.strategy).lower() == "plora":
+        strategy = FlowerPLoRAStrategy(
+            fraction_fit=cfg.server.fraction_fit,
+            min_fit_clients=cfg.server.min_fit,
+            min_available_clients=num_clients,
+            evaluate_fn=evaluate_fn,
+            on_fit_config_fn=on_fit_config_fn,
+            on_evaluate_config_fn=on_fit_config_fn,
+        )
+    else:
+        strategy = fl.server.strategy.FedAvg(
+            fraction_fit=cfg.server.fraction_fit,
+            min_fit_clients=cfg.server.min_fit,
+            min_available_clients=num_clients,
+            evaluate_fn=evaluate_fn,
+            on_fit_config_fn=on_fit_config_fn,
+            on_evaluate_config_fn=on_fit_config_fn
+        )
 
     # 3. Client Factory
     def client_fn(cid: str) -> fl.client.Client:

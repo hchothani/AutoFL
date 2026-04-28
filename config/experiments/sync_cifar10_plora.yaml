@@ -1,0 +1,43 @@
+defaults:
+  - ../config
+
+model:
+  name: simple_cnn
+  num_classes: 10
+  pretrained: false
+
+dataset:
+  workload: cifar10
+
+cl:
+ enabled: true
+ num_experiences: 5
+server:
+  num_clients: 5
+  num_rounds: 20
+  fraction_fit: 1.0
+  fraction_eval: 1.0
+  min_fit: 5
+  min_eval: 5
+  strategy: plora
+
+client:
+  num_cpus: 1 #2
+  num_gpus: 0.0 #0.2
+  local_epochs: 2
+  batch_size: 32
+  learning_rate: 0.005
+  max_concurrency: 1
+  
+async:
+  enabled: false
+
+plora:
+  rank: 4
+  alpha: 1.0
+
+wb:
+  mode: online
+  enabled: true
+  name: sync_cifar10_test
+  project: autofl-sync

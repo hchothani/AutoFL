@@ -8,6 +8,12 @@ import torch.optim as optim
 from typing import Dict, List, Tuple
 import numpy as np
 
+from algorithms.plora import (
+    get_lora_parameters,
+    inject_lora,
+    set_lora_parameters,
+)
+
 class SyncSimulatedClient(fl.client.NumPyClient):
     """A clean, standard synchronous Flower client."""
     
@@ -18,16 +24,52 @@ class SyncSimulatedClient(fl.client.NumPyClient):
         self.test_loaders = test_loaders
         self.device = device
         self.cfg = cfg
+        
+        self.is_plora = str(cfg.server.strategy).lower() == "plora"
+
+        model = model_fn()
+        if self.is_plora:
+            plora_cfg = cfg.get("plora", {})
+            rank = int(plora_cfg.get("rank", 4))
+            alpha = float(plora_cfg.get("alpha", 1.0))
+            base_seed = int(plora_cfg.get("model_init_seed", 42))
+            client_seed = base_seed + self._cid_to_int(cid)
+            torch.manual_seed(client_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(client_seed)
+            model = inject_lora(model, rank=rank, alpha=alpha)
+        self.model = model.to(device)
 
         # Extracting network simulation params
         self.simulate_delay = cfg.client.get("simulate_delay", False)
         self.min_delay = cfg.client.get("min_delay", 0.5)
         self.max_delay = cfg.client.get("max_delay", 3.0)
 
+    @staticmethod
+    def _cid_to_int(cid: str) -> int:
+        try:
+            return int(cid)
+        except (TypeError, ValueError):
+            return sum(ord(ch) for ch in str(cid))
+
+    def _trainable_parameters(self):
+        if self.is_plora:
+            return [
+                p
+                for name, p in self.model.named_parameters()
+                if "lora_" in name and p.requires_grad
+            ]
+        return self.model.parameters()
+
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
+        if self.is_plora:
+            return get_lora_parameters(self.model)
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
     def set_parameters(self, parameters: List[np.ndarray]):
+        if self.is_plora:
+            set_lora_parameters(self.model, parameters)
+            return
         params_dict = zip(self.model.state_dict().keys(), parameters)
         state_dict = {k: torch.tensor(v) for k, v in params_dict}
         self.model.load_state_dict(state_dict, strict=True)
@@ -44,7 +86,7 @@ class SyncSimulatedClient(fl.client.NumPyClient):
         self.set_parameters(parameters)
         self.model.train()
         
-        optimizer = optim.SGD(self.model.parameters(), lr=self.cfg.client.learning_rate)
+        optimizer = optim.SGD(self._trainable_parameters(), lr=self.cfg.client.learning_rate)
         criterion = nn.CrossEntropyLoss()
         
         total_loss = 0.0
