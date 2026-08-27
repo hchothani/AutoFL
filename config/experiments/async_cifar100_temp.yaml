@@ -1,0 +1,18 @@
+async:
+  enabled: true
+  total_train_time: 900
+  waiting_interval: 50
+
+cl:
+  enabled: true
+  num_experiences: 10
+
+context:
+  enabled: true
+
+lora:
+  enabled: true
+
+dataset:
+  workload: cifar100
+  split: iid

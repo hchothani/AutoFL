@@ -1,0 +1,17 @@
+async:
+  enabled: true
+
+cl:
+  enabled: true
+  num_experiences: 5
+
+context:
+  enabled: true
+  threshold: 0.4
+
+dataset:
+  workoload: cifar10
+  split: niid
+
+lora:
+  enabled: true
