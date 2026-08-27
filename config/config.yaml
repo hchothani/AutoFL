@@ -75,6 +75,7 @@ wb:
     - "async.enabled"
     - "context.enabled"
     - "lora.enabled"
+    - "cl.enabled"
 
 latency:
   enabled: true
