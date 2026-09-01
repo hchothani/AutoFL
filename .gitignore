@@ -15,6 +15,7 @@ wandb/*
 logs/*
 log.txt
 templogs/
+config/wandb/
 
 # Distribution / packaging
 .Python
