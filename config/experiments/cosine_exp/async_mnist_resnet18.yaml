@@ -24,3 +24,14 @@ context:
 
 lora:
   enabled: true
+
+wb:
+  group: cosine_experiments
+  run_name_keys:
+    - "dataset.workload"
+    - "model.name"
+    - "context.threshold"
+    - "async.enabled"
+    - "context.enabled"
+    - "lora.enabled"
+    - "cl.enabled"

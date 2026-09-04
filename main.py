@@ -113,6 +113,7 @@ def main():
         wandb.init(
             project=cfg.get("wb", {}).get("project", "autofl-async"),
             name=run_name,
+            group=cfg.get("wb", {}).get("group", None),
             config=OmegaConf.to_container(cfg, resolve=True),
             mode=cfg.get("wb", {}).get("mode", "online"),
         )

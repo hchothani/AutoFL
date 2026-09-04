@@ -35,8 +35,10 @@ import glob
 import time
 import argparse
 import subprocess
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+# pyrefly: ignore [missing-import]
 from omegaconf import OmegaConf
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -166,11 +168,15 @@ def run_single_experiment(
     with open(yaml_path, "r") as f:
         original_yaml_content = f.read()
 
-    # Temporarily apply threshold (and optional train_time) to the experiment YAML
+    # Temporarily apply threshold, train_time, and group to the experiment YAML
     cfg_data = OmegaConf.load(str(yaml_path))
     cfg_data["context"]["threshold"] = float(threshold)
     if train_time:
         cfg_data["async"]["total_train_time"] = int(train_time)
+    if group:
+        if "wb" not in cfg_data:
+            cfg_data["wb"] = {}
+        cfg_data["wb"]["group"] = str(group)
 
     with open(yaml_path, "w") as f:
         OmegaConf.save(cfg_data, f)
@@ -185,16 +191,39 @@ def run_single_experiment(
     if group:
         env["WANDB_RUN_GROUP"] = str(group)
 
+    seen_contexts = set()
+    latest_bwt = 0.0
+
     run_start = time.time()
     try:
-        proc = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env)
+        proc = subprocess.Popen(
+            cmd, cwd=str(REPO_ROOT), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1
+        )
+        for line in iter(proc.stdout.readline, ''):
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+            # Parse discovered contexts (e.g. "assigned Context 2" or "generated NEW Context 3" or "LoRA 2:")
+            m_ctx = re.findall(r'(?:Context|LoRA)\s+(\d+)', line)
+            for c_id in m_ctx:
+                seen_contexts.add(int(c_id))
+
+            # Parse BWT metrics (e.g. "BWT: 0.0000" or "BWT: -0.0125")
+            m_bwt = re.search(r'BWT:\s*([-+]?\d*\.?\d+)', line)
+            if m_bwt:
+                latest_bwt = float(m_bwt.group(1))
+
+        proc.stdout.close()
+        proc.wait()
     finally:
         # Always restore original YAML
         with open(yaml_path, "w") as f:
             f.write(original_yaml_content)
 
     if proc.returncode != 0:
-        print(f"[RUNNER ERROR] Experiment {config_name} (tau={threshold}) exited with code {proc.returncode}")
+        print(f"\n[RUNNER ERROR] Experiment {config_name} (tau={threshold}) exited with code {proc.returncode}")
         return {
             "config": config_name,
             "dataset": dataset,
@@ -202,8 +231,8 @@ def run_single_experiment(
             "threshold": threshold,
             "final_accuracy": 0.0,
             "final_loss": 99.0,
-            "num_contexts": 0,
-            "bwt": 0.0,
+            "num_contexts": len(seen_contexts) if seen_contexts else 0,
+            "bwt": latest_bwt,
             "total_updates": 0,
             "status": "FAILED"
         }
@@ -217,8 +246,8 @@ def run_single_experiment(
     final_acc = float(results.get("final_accuracy", 0.0))
     final_loss = float(results.get("final_loss", 0.0))
     updates = int(results.get("total_updates", 0))
-    contexts = int(results.get("num_contexts", 1))
-    bwt = float(results.get("bwt", 0.0))
+    contexts = len(seen_contexts) if seen_contexts else int(results.get("num_contexts", 1))
+    bwt = latest_bwt if latest_bwt != 0.0 else float(results.get("bwt", 0.0))
     run_dir = results.get("run_dir", "")
 
     print(f"\n[RUN COMPLETE] Accuracy: {final_acc*100:.2f}% | Loss: {final_loss:.4f} | Contexts: {contexts} | BWT: {bwt:.4f}")
