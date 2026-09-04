@@ -168,9 +168,9 @@ def run_single_experiment(
 
     # Temporarily apply threshold (and optional train_time) to the experiment YAML
     cfg_data = OmegaConf.load(str(yaml_path))
-    cfg_data.context.threshold = float(threshold)
+    cfg_data["context"]["threshold"] = float(threshold)
     if train_time:
-        cfg_data.async.total_train_time = int(train_time)
+        cfg_data["async"]["total_train_time"] = int(train_time)
 
     with open(yaml_path, "w") as f:
         OmegaConf.save(cfg_data, f)
