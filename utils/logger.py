@@ -31,7 +31,10 @@ def generate_run_name(cfg: DictConfig, is_async: bool) -> str:
             
         # Format Standard Strings/Numbers
         elif str(val).lower() != "none":
-            parts.append(str(val))
+            if key == "context.threshold":
+                parts.append(f"tau_{val}")
+            else:
+                parts.append(str(val))
             
     # Example Output: "cifar10-resnet18-async-delay-1430"
     return "-".join(parts)
