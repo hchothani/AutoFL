@@ -7,6 +7,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
+#vscode congfigs
+.vscode/*
+
 # C extensions
 *.so
 
@@ -190,6 +194,7 @@ autofl_env/*
 logs/*
 data/*
 temp_config.yaml
+
 
 
 omnet-data/*.csv

@@ -182,12 +182,13 @@ def run_single_experiment(
         OmegaConf.save(cfg_data, f)
 
     cmd = [
-        sys.executable, "main.py",
+        sys.executable, "-u", "main.py",
         "--config-path", str(CONFIG_DIR),
         "--config-name", config_name
     ]
 
     env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     if group:
         env["WANDB_RUN_GROUP"] = str(group)
 
