@@ -45,30 +45,20 @@ def split_dataset_by_phase(dataset, num_phases: int, num_classes: int):
 def partition_niid(dataset, num_clients: int, phase_classes: list, alpha: float):
     """Distributes dataset indices to clients using a Dirichlet Distribution (Non-IID)."""
     labels = get_labels(dataset)
-    
-    min_size = 0
-    attempts = 0
-    client_indices = {i: [] for i in range(num_clients)}
+    client_indices = {i : [] for i in range(num_clients)}
 
-    # Ensure every client receives at least a few samples across all phase classes
-    while min_size < 4 and attempts < 100:
-        attempts += 1
-        client_indices = {i: [] for i in range(num_clients)}
+    for k in phase_classes:
+        idx_k = np.where(labels == k)[0]
+        if len(idx_k) == 0: continue
+        
+        np.random.shuffle(idx_k)
+        proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
+        proportions = np.cumsum(proportions) * len(idx_k)
+        splits = proportions.astype(int)[:-1]
 
-        for k in phase_classes:
-            idx_k = np.where(labels == k)[0]
-            if len(idx_k) == 0: continue
-            
-            np.random.shuffle(idx_k)
-            proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
-            proportions = np.cumsum(proportions) * len(idx_k)
-            splits = proportions.astype(int)[:-1]
-
-            idx_k_split = np.split(idx_k, splits)
-            for i in range(num_clients):
-                client_indices[i].extend(idx_k_split[i].tolist())
-
-        min_size = min(len(client_indices[i]) for i in range(num_clients))
+        idx_k_split = np.split(idx_k, splits)
+        for i in range(num_clients):
+            client_indices[i].extend(idx_k_split[i].tolist())
 
     for i in range(num_clients):
         np.random.shuffle(client_indices[i])
