@@ -66,6 +66,8 @@ async:
   server_artificial_delay: false
   is_streaming: false
   client_local_delay: false
+  max_workers: 5
+  client_selection_strategy: round_robin
 
 wb:
   project: autofl-testing
@@ -77,6 +79,7 @@ wb:
     - "context.enabled"
     - "lora.enabled"
     - "cl.enabled"
+    - "async.client_selection_strategy"
 
 latency:
   enabled: true
