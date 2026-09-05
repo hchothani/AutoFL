@@ -30,6 +30,7 @@ model:
 
 context:
   enabled: false
+  threshold: 0.15
 
 lora:
   enabled: false
