@@ -2,6 +2,7 @@ async:
   enabled: true
   total_train_time: 900
   waiting_interval: 50
+  client_selection_strategy: round_robin
 
 cl:
   enabled: true
@@ -16,3 +17,4 @@ lora:
 dataset:
   workload: cifar100
   split: iid
+

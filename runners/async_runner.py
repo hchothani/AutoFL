@@ -114,7 +114,7 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     return {
         "total_train_time":           async_cfg.get("total_train_time",       300),
         "waiting_interval":           async_cfg.get("waiting_interval",        10),
-        "max_workers":                async_cfg.get("max_workers",              4),
+        "max_workers":                async_cfg.get("max_workers",              100),
         "aggregation_strategy":       async_cfg.get("aggregation_strategy", "fedasync"),
         "staleness_alpha":            async_cfg.get("staleness_alpha",        0.5),
         "fedasync_mixing_alpha":      async_cfg.get("fedasync_mixing_alpha",  0.9),
@@ -453,6 +453,7 @@ def run_async_simulation(
         ray_actors[i] = actor
 
     # ── Initial Dispatch with Scheduler ────────────────────────────────────────
+    unique_vehicles_trained = set()
     client_registry = {i: {"data": 1.0, "loss": 1.0} for i in range(num_clients)}
     available_clients = list(range(num_clients))
     
@@ -464,6 +465,8 @@ def run_async_simulation(
     
     for _ in range(initial_workers):
         client_idx = get_next_client(client_strategy, client_registry, available_clients, temperature)
+        unique_vehicles_trained.add(client_idx) 
+        print(f"  [Scheduler] Init Dispatch -> Vehicle {client_idx}. (Available pool: {len(available_clients)})") # NEW
         actor = ray_actors[client_idx]
         
         with param_lock:
@@ -510,6 +513,13 @@ def run_async_simulation(
             if time.time() < end_time:
                 # Select a new client from the available pool
                 next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
+                unique_vehicles_trained.add(next_client)
+
+                print(
+                    f"  [Scheduler] Handoff: Vehicle {client_idx_from_tuple} finished -> "
+                    f"Dispatched Vehicle {next_client}. "
+                    f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
+                )
                 
                 with param_lock:
                     assigned_context = context_assignments.get(next_client, 0)
@@ -612,6 +622,8 @@ def run_async_simulation(
                 f"Loss: {loss:.4f}, Accuracy: {acc:.4f}, "
                 f"BWT: {bwt:.4f}, FWT: {fwt:.4f}\n"
             )
+
+            print(f"  [Scheduler Health] {len(unique_vehicles_trained)} out of {num_clients} total vehicles have participated so far.\n")
 
             if wandb_enabled:
                 log_dict = {
