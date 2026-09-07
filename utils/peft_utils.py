@@ -20,8 +20,14 @@ def wrap_with_lora(base_model, cfg: DictConfig):
     
     target_modules = []
     for name, module in base_model.named_modules():
-        if isinstance(module, (nn.Linear, nn.Conv2d)):
+        if isinstance(module, nn.Linear):
             target_modules.append(name)
+        elif isinstance(module, nn.Conv2d):
+            # Skip depthwise convolutions (groups > 1) because PEFT requires rank to be
+            # divisible by groups, which fails on MobileNetV2 depthwise convs (groups=32, rank=8).
+            # The 1x1 pointwise convs (groups=1) contain >90% of parameters and are fully supported.
+            if module.groups == 1:
+                target_modules.append(name)
             
     if not target_modules:
         raise ValueError("Could not find any nn.Linear or nn.Conv2d layers to wrap with LoRA!")
