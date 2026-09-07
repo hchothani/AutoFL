@@ -32,6 +32,7 @@ import wandb
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
+from collections import deque
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -88,7 +89,7 @@ class AsyncRayClientActor:
 
     def __init__(self, client_idx: int, client_obj):
         self.client_idx = client_idx
-        self.client = client_obj
+        self.client = ray.get(client_obj)
 
     def fit(self, params, start_timestamp: float, current_phase: int):
         from flwr.common import FitIns
@@ -110,7 +111,7 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     return {
         "total_train_time":       async_cfg.get("total_train_time",       300),
         "waiting_interval":       async_cfg.get("waiting_interval",        10),
-        "max_workers":            async_cfg.get("max_workers",              4),
+        "max_workers":            async_cfg.get("max_workers",              4),#4
         "aggregation_strategy":   async_cfg.get("aggregation_strategy", "fedasync"),
         "staleness_alpha":        async_cfg.get("staleness_alpha",        0.5),
         "fedasync_mixing_alpha":  async_cfg.get("fedasync_mixing_alpha",  0.9),
@@ -424,19 +425,72 @@ def run_async_simulation(
     if not ray.is_initialized():
         ray.init(ignore_reinit_error=True, include_dashboard=False)
 
-    print(f"\nDeploying {num_clients} stateful vehicle actors to the Ray cluster...")
-    ray_actors: Dict[int, Any] = {}
+    
+   
+
+   # 1. Check BOTH CPU and GPU availability
+    available_cpus = ray.cluster_resources().get("CPU", 1)
+    available_gpus = ray.cluster_resources().get("GPU", 0)
+
+    cpus_per_client = cfg.client.num_cpus
+    gpus_per_client = cfg.client.num_gpus
+
+    # 2. Calculate limits for both
+    max_by_cpu = int(available_cpus // max(cpus_per_client, 1))
+    
+    if gpus_per_client > 0:
+        max_by_gpu = int(round(available_gpus / gpus_per_client))
+        # The true max is the bottleneck between CPU and GPU
+        max_workers = min(max_by_cpu, max_by_gpu)
+    else:
+        max_workers = max_by_cpu
+
+    # Fallback to prevent 0 workers if hardware is misconfigured
+    max_workers = max(1, max_workers)
+
+    print(f"[Hardware Setup] Detected {available_cpus} CPUs.")
+    print(f"[Hardware Setup] Deploying {max_workers} concurrent vehicle actors.")
+
+    # loading into ray plasma mem
+    print(f"\nLoading {num_clients} client datasets into Ray Shared Memory (Plasma)...")
+    client_refs = {}
     for i in range(num_clients):
+        client_refs[i] = ray.put(clients[i])
+   
+    client_queue = deque()
+    ray_actors: Dict[int, Any] = {}
+    active_tasks: Dict[Any, int] = {}
+
+
+
+    print(f"\nDeploying {num_clients} stateful vehicle actors to the Ray cluster...")
+   
+
+    for i in range(num_clients):
+        client_queue.append(i)
+   #update: now actors shall be instantiated when given compute to prevent deadlock out of lack of resouces for preassigned actors
+    
+        
+
+    #active_tasks: Dict[Any, int] = {}
+    eval_counter, last_eval_time = 0, start_time
+
+    unique_vehicles_trained = set()
+
+    for _ in range(min(max_workers, num_clients)):
+        active_idx = client_queue.popleft()# removes client indexes that are in queue and get compute
+        
+        unique_vehicles_trained.add(active_idx)
+        print(f"  [Scheduler] Init Dispatch -> Vehicle {active_idx}. (Queue remaining: {len(client_queue)})")
+
         actor = AsyncRayClientActor.options(
             num_cpus=cfg.client.num_cpus,
             num_gpus=cfg.client.num_gpus,
-        ).remote(client_idx=i, client_obj=clients[i])
-        ray_actors[i] = actor
+        ).remote(client_idx=active_idx, client_obj=client_refs[active_idx])
 
-    active_tasks: Dict[Any, int] = {}
-    eval_counter, last_eval_time = 0, start_time
+        ray_actors[active_idx]=actor
 
-    for client_idx, actor in ray_actors.items():
+    #for client_idx, actor in ray_actors.items():
         with param_lock:
             if use_lora:
                 combined = combine_arrays(
@@ -448,7 +502,7 @@ def run_async_simulation(
             else:
                 params = global_base_params
         task = actor.fit.remote(params, time.time(), current_phase=0)
-        active_tasks[task] = client_idx
+        active_tasks[task] = active_idx#client_idx
 
     # ── Main async event loop ──────────────────────────────────────────────────
     while time.time() < end_time and active_tasks:
@@ -471,8 +525,32 @@ def run_async_simulation(
                 continue
 
             if time.time() < end_time:
+
+                ray.kill(ray_actors[client_idx])
+                del ray_actors[client_idx]
+
+                client_queue.append(client_idx)
+                
+                # ── 2. PREPARE THE NEXT CLIENT ───────────────────────────────
+                next_client_idx = client_queue.popleft()
+
+                unique_vehicles_trained.add(next_client_idx)
+                print(
+                    f"  [Scheduler] Handoff: Vehicle {client_idx} finished -> "
+                    f"Dispatched Vehicle {next_client_idx}. "
+                    f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
+                )
+
+                next_actor = AsyncRayClientActor.options(
+                    num_cpus=cfg.client.num_cpus,
+                    num_gpus=cfg.client.num_gpus,
+                ).remote(client_idx=next_client_idx, client_obj=client_refs[next_client_idx])
+                
+              
+                ray_actors[next_client_idx] =next_actor
+                
                 with param_lock:
-                    assigned_context = context_assignments.get(client_idx, 0)
+                    assigned_context = context_assignments.get(next_client_idx, 0)
                     if use_lora:
                         assigned_adapter = context_adapters.get(
                             assigned_context, context_adapters[0]
@@ -496,9 +574,19 @@ def run_async_simulation(
                     )
                     print(f"{'='*50}\n")
                     current_global_phase = current_phase
+               
+               #1.kill current actor to allow cpu compute alloc to a client in queue
+            #ray.kill(ray_actors[client_idx])
+                
+                # 2. Reinstantiate a fresh actor for the killed client.give it task based  on current base and lora 
+                #    It enters the PENDING_CREATION queue at the back of the line.
+              #  ray_actors[client_idx] = AsyncRayClientActor.options(
+               #     num_cpus=cfg.client.num_cpus,
+                #    num_gpus=cfg.client.num_gpus,
+                #).remote(client_idx=client_idx, client_obj=clients[client_idx])
 
-                new_task = ray_actors[client_idx].fit.remote(params, time.time(), current_phase)
-                active_tasks[new_task] = client_idx
+                new_task =next_actor.fit.remote(params, time.time(), current_phase)
+                active_tasks[new_task] = next_client_idx
 
         # ── Periodic evaluation ────────────────────────────────────────────────
         if time.time() - last_eval_time >= waiting_interval:
@@ -572,6 +660,8 @@ def run_async_simulation(
                 f"Loss: {loss:.4f}, Accuracy: {acc:.4f}, "
                 f"BWT: {bwt:.4f}, FWT: {fwt:.4f}\n"
             )
+
+            print(f"  [Scheduler Health] {len(unique_vehicles_trained)} out of {num_clients} total vehicles have participated so far.\n")
 
             if wandb_enabled:
                 log_dict = {
