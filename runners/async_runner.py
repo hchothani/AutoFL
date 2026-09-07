@@ -89,7 +89,7 @@ class AsyncRayClientActor:
 
     def __init__(self, client_idx: int, client_obj):
         self.client_idx = client_idx
-        self.client = ray.get(client_obj)
+        self.client = client_obj
 
     def fit(self, params, start_timestamp: float, current_phase: int):
         from flwr.common import FitIns

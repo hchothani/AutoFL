@@ -6,7 +6,7 @@ dataset:
   split: niid
 
 server:
-  num_clients: 5
+  num_clients: 10
 
 cl:
   enabled: true
