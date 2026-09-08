@@ -20,7 +20,7 @@ async:
 
 context:
   enabled: true
-  threshold: 0.35  # Sweep: [0.20, 0.30, 0.40, 0.50]
+  threshold: 0.35  # Sweep: [0.20, 0.30, 0.40, 0.50] #0.4 seems best
 
 lora:
   enabled: true

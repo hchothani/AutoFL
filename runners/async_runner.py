@@ -285,7 +285,7 @@ def run_async_simulation(
     ]
 
     # ### --- ENSEMBLE CHANGE: RESTORED DUAL-SPEED ALPHAS --- ###
-    base_strategy = create_strategy(phase_total_samples[0], custom_alpha=0.005)
+    base_strategy = create_strategy(phase_total_samples[0], custom_alpha=0.1)
     context_strategies: Dict[int, AsynchronousStrategy] = (
         {0: create_strategy(phase_total_samples[0], custom_alpha=0.9)} if use_lora else {}
     )

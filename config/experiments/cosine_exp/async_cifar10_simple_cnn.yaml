@@ -20,7 +20,7 @@ async:
 
 context:
   enabled: true
-  threshold: 0.20  # Sweep: [0.20, 0.30, 0.40, 0.50] #experimental sweetspot = 0.2
+  threshold: 0.20  # Sweep: [0.20, 0.30, 0.40, 0.50] #experimental sweetspot = 0.35
 
 lora:
   enabled: true
