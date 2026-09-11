@@ -14,13 +14,13 @@ cl:
   num_experiences: 5
 
 async:
-  enabled: true
+  enabled: true 
   total_train_time: 900
   waiting_interval: 10
 
 context:
   enabled: true
-  threshold: 0.35  # Sweep: [0.20, 0.30, 0.40, 0.50] #0.4 seems best
+  threshold: 0.35  # Sweep: [0.20, 0.30, 0.40, 0.50] #0.2 seems best
 
 lora:
   enabled: true
