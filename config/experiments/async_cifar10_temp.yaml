@@ -1,13 +1,18 @@
 async:
   enabled: true
 
+
+server:
+  num_clients: 10
+
+
 cl:
   enabled: true
   num_experiences: 5
 
 context:
   enabled: true
-  threshold: 0.4
+  threshold: 0.4 #try 0.2
 
 dataset:
   workoload: cifar10
