@@ -1,5 +1,13 @@
 async:
   enabled: true
+  client_selection_strategy: loss_weighted
+  loss_temperature: 0.5
+
+
+
+server:
+  num_clients: 10
+
 
 cl:
   enabled: true
@@ -7,7 +15,7 @@ cl:
 
 context:
   enabled: true
-  threshold: 0.4
+  threshold: 0.2 #try 0.2
 
 dataset:
   workoload: cifar10
@@ -15,3 +23,7 @@ dataset:
 
 lora:
   enabled: true
+
+client:
+  num_cpus: 2
+  num_gpus: 0.20
