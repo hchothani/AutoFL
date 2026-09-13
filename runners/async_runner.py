@@ -292,6 +292,7 @@ def run_async_simulation(
     waiting_interval = async_cfg["waiting_interval"]
     client_strategy  = async_cfg["client_selection_strategy"]
     temperature      = async_cfg["loss_temperature"]
+    print(f"[Scheduler] Client selection strategy: {client_strategy}")
 
     cl_enabled  = cfg.get("cl", {}).get("enabled", False)
     num_phases  = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
