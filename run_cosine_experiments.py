@@ -58,6 +58,9 @@ ALL_CONFIGS = [
     "async_cifar100_simple_cnn",
     "async_cifar100_resnet18",
     "async_cifar100_mobilenet_v2",
+    "async_eurosat_simple_cnn",
+    "async_eurosat_resnet18",
+    "async_eurosat_mobilenet_v2",
 ]
 
 
