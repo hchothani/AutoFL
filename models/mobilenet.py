@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -18,10 +19,16 @@ class MobileNet(nn.Module):
                     stride=orig_conv.stride, padding=orig_conv.padding, bias=False
                 )
                 
-            self.backbone.classifier = nn.Sequential(
-                nn.Dropout(0.2), 
-                nn.Linear(self.backbone.last_channel, num_classes)
-            )
+            bottleneck = nn.Linear(self.backbone.last_channel, 84, bias=False)
+            nn.init.orthogonal_(bottleneck.weight)
+            bottleneck.weight.requires_grad = False
+
+            self.backbone.classifier = nn.Sequential(OrderedDict([
+                ('dropout', nn.Dropout(0.2)),
+                ('bottleneck', bottleneck),
+                ('ln_bottleneck', nn.LayerNorm(84)),
+                ('linear', nn.Linear(84, num_classes))
+            ]))
             
         elif version == "v3_small":
             self.backbone = models.mobilenet_v3_small(weights='DEFAULT' if pretrained else None)

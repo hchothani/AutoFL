@@ -40,7 +40,11 @@ class ResNetBase(nn.Module):
         
         # Adaptive pooling handles 28x28, 32x32, 224x224 naturally
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.bottleneck = nn.Linear(512 * block.expansion, 84, bias=False)
+        nn.init.orthogonal_(self.bottleneck.weight)
+        self.bottleneck.weight.requires_grad = False
+        self.ln_bottleneck = nn.LayerNorm(84)
+        self.fc = nn.Linear(84, num_classes)
 
     def _make_layer(self, block, out_channels, num_blocks, stride):
         strides = [stride] + [1] * (num_blocks - 1)
@@ -58,6 +62,8 @@ class ResNetBase(nn.Module):
         x = self.conv5_x(x)
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
+        x = self.bottleneck(x)
+        x = self.ln_bottleneck(x)
         return self.fc(x)
 
 # The exported builder functions

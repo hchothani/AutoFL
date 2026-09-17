@@ -21,7 +21,9 @@ def wrap_with_lora(base_model, cfg: DictConfig):
     target_modules = []
     for name, module in base_model.named_modules():
         if isinstance(module, nn.Linear):
-            target_modules.append(name)
+            # Exclude frozen orthogonal bottleneck projections
+            if "bottleneck" not in name:
+                target_modules.append(name)
         elif isinstance(module, nn.Conv2d):
             # Skip depthwise convolutions (groups > 1) because PEFT requires rank to be
             # divisible by groups, which fails on MobileNetV2 depthwise convs (groups=32, rank=8).
@@ -47,7 +49,11 @@ def wrap_with_lora(base_model, cfg: DictConfig):
     print("[Model] Wrapped Model in LoRA")
     
     # 4. EXPLICIT UNFREEZE: Allow Base Model to train alongside the Adapters
+    # Frozen bottleneck projection layers must remain strictly stationary across phases
     for name, param in peft_model.base_model.named_parameters():
-        param.requires_grad = True
+        if "bottleneck" in name:
+            param.requires_grad = False
+        else:
+            param.requires_grad = True
         
     return peft_model
