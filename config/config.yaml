@@ -30,6 +30,8 @@ model:
 
 context:
   enabled: false
+  merge_interval_evals: 3
+  threshold: 0.2
 
 lora:
   enabled: false

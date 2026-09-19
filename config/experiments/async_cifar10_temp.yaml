@@ -15,7 +15,8 @@ cl:
 
 context:
   enabled: true
-  threshold: 0.2 #try 0.2
+  threshold: 0.35 #try 0.2
+  merge_interval_evals: 3
 
 dataset:
   workoload: cifar10
