@@ -3,13 +3,15 @@ from . import cifar100
 from . import gtsrb
 from . import mnist
 from . import eurosat
+from . import svhn
 
 _WORKLOAD_REGISTRY = {
     "cifar10": cifar10.get_datasets,
     "cifar100": cifar100.get_datasets,
     "gtsrb": gtsrb.get_datasets,
     "mnist": mnist.get_datasets,
-    "eurosat": eurosat.get_datasets
+    "eurosat": eurosat.get_datasets,
+    "svhn": svhn.get_datasets
 }
 
 def load_workload(workload_name: str, data_dir: str):

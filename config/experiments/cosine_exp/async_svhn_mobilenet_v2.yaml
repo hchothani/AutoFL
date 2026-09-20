@@ -1,9 +1,9 @@
-# AutoFL Experiment: CIFAR-10 + SimpleCNN
+# AutoFL Experiment: SVHN + MobileNetV2
 model:
-  name: simple_cnn
+  name: mobilenet_v2
 
 dataset:
-  workload: cifar10
+  workload: svhn
   split: niid
 
 server:
@@ -20,7 +20,7 @@ async:
 
 context:
   enabled: true
-  threshold: auto  # Sweep: [0.20, 0.30, 0.40, 0.50] #experimental sweetspot = 0.35
+  threshold: 0.35
 
 lora:
   enabled: true

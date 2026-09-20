@@ -27,6 +27,7 @@ from utils.data_loader import get_data_loaders
 from utils.logger import generate_run_name
 from runners.async_runner import get_async_config, run_async_simulation
 from runners.sync_runner import run_sync_simulation
+from utils.threshold_utils import resolve_context_threshold
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -144,6 +145,9 @@ def main():
     model_fn = get_model_fn(cfg)    
     test_model = model_fn()
     print(f"[Model] Successfully initialized {cfg.model.name} for {cfg.dataset.num_classes} classes.")
+
+    # Dynamically resolve context threshold using Algorithm 1 + Theoretical Formula
+    resolve_context_threshold(cfg, test_model, global_test_loaders, device)
     del test_model
 
     # 5. Route to Runner
