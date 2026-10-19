@@ -65,6 +65,8 @@ async:
   server_artificial_delay: false
   is_streaming: false
   client_local_delay: false
+  client_selection_strategy: round_robin
+  loss_temperature: 0.5
 
 wb:
   project: autofl-testing
