@@ -1,5 +1,5 @@
-"""
-async_runner.py  —  Asynchronous Federated Learning with Context-Aware LoRA Adapter Bank
+
+"""async_runner.py  —  Asynchronous Federated Learning with Context-Aware LoRA Adapter Bank
 =========================================================================================
 
 CHANGE LOG: Merged Structural Hygiene with Ensemble Continual Learning Math
@@ -11,6 +11,9 @@ CHANGE LOG: Merged Structural Hygiene with Ensemble Continual Learning Math
 [UPGRADE]  Ensemble Inference: `phase_to_context` now tracks a SET of all contexts seen 
            in a phase. The evaluator fuses all active adapters for a phase and averages 
            their logits to accurately test spatio-temporally mixed datasets.
+[UPGRADE]  Dynamic Scheduler & Worker Pool: Implemented Round Robin, Data Weighted, and 
+           Loss Weighted sampling. Utilizes a fixed Ray Worker Pool to guarantee zero 
+           resource starvation and eliminate autoscaler bottlenecks.
 ─────────────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -20,7 +23,9 @@ collections.Sequence = collections.abc.Sequence  # Compatibility shim for older 
 
 import time
 import json
-from typing import Any, Dict, List, Optional
+import random
+import math
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -79,25 +84,24 @@ def calculate_weight_shift(
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Ray remote actor
+# Generic Ray Worker Actor (Stateless)
 # ──────────────────────────────────────────────────────────────────────────────
 
 @ray.remote
-class AsyncRayClientActor:
-    """Wraps a stateful Flower client as a Ray actor for non-blocking async training."""
-
-    def __init__(self, client_idx: int, client_obj):
-        self.client_idx = client_idx
-        self.client = client_obj
-
-    def fit(self, params, start_timestamp: float, current_phase: int):
+class AsyncWorkerActor:
+    """A generic, stateless Ray worker that dynamically executes whichever client is assigned to it."""
+    
+    def fit(self, client_idx: int, client_obj, params, start_timestamp: float, current_phase: int):
         from flwr.common import FitIns
+
+      
         config = {
             "start_timestamp": start_timestamp,
             "current_phase": current_phase,
         }
-        fit_res = self.client.fit(FitIns(parameters=params, config=config))
-        return self.client_idx, fit_res, current_phase
+        # The worker executes the fit function on the provided client state
+        fit_res = client_obj.fit(FitIns(parameters=params, config=config))
+        return client_idx, fit_res, current_phase
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config helper
@@ -108,39 +112,64 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     if isinstance(async_cfg, DictConfig):
         async_cfg = OmegaConf.to_container(async_cfg, resolve=True)
     return {
-        "total_train_time":       async_cfg.get("total_train_time",       300),
-        "waiting_interval":       async_cfg.get("waiting_interval",        10),
-        "max_workers":            async_cfg.get("max_workers",              4),
-        "aggregation_strategy":   async_cfg.get("aggregation_strategy", "fedasync"),
-        "staleness_alpha":        async_cfg.get("staleness_alpha",        0.5),
-        "fedasync_mixing_alpha":  async_cfg.get("fedasync_mixing_alpha",  0.9),
-        "fedasync_a":             async_cfg.get("fedasync_a",             0.5),
-        "use_staleness":          async_cfg.get("use_staleness",          True),
-        "use_sample_weighing":    async_cfg.get("use_sample_weighing",    True),
-        "send_gradients":         async_cfg.get("send_gradients",         False),
-        "server_artificial_delay":async_cfg.get("server_artificial_delay",False),
-        "is_streaming":           async_cfg.get("is_streaming",           False),
-        "client_local_delay":     async_cfg.get("client_local_delay",     False),
-        "simulate_delay":         async_cfg.get("simulate_delay",         True),
-        "min_delay":              async_cfg.get("min_delay",              0.5),
-        "max_delay":              async_cfg.get("max_delay",              3.0),
+        "total_train_time":           async_cfg.get("total_train_time",       900),#300
+        "waiting_interval":           async_cfg.get("waiting_interval",        10),
+        "max_workers":                async_cfg.get("max_workers",              5),#None
+        "aggregation_strategy":       async_cfg.get("aggregation_strategy", "fedasync"),
+        "staleness_alpha":            async_cfg.get("staleness_alpha",        0.5),
+        "fedasync_mixing_alpha":      async_cfg.get("fedasync_mixing_alpha",  0.9),
+        "fedasync_a":                 async_cfg.get("fedasync_a",             0.5),
+        "use_staleness":              async_cfg.get("use_staleness",          True),
+        "use_sample_weighing":        async_cfg.get("use_sample_weighing",    True),
+        "send_gradients":             async_cfg.get("send_gradients",         False),
+        "server_artificial_delay":    async_cfg.get("server_artificial_delay",False),
+        "is_streaming":               async_cfg.get("is_streaming",           False),
+        "client_local_delay":         async_cfg.get("client_local_delay",     False),
+        "simulate_delay":             async_cfg.get("simulate_delay",         True),
+        "min_delay":                  async_cfg.get("min_delay",              0.5),
+        "max_delay":                  async_cfg.get("max_delay",              3.0),
+        "client_selection_strategy":  async_cfg.get("client_selection_strategy", "round_robin"),
+        "loss_temperature":           async_cfg.get("loss_temperature",       1.0),
     }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Global model evaluation (ENSEMBLE INFERENCE UPGRADE)
+# Client Scheduler
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_next_client(strategy: str, registry: dict, available_clients: list, temperature: float = 1.0) -> int:
+    """Selects the next client from the available pool based on the defined strategy."""
+    if not available_clients:
+        raise ValueError("No clients available to schedule.")
+
+    if strategy == "round_robin":
+        return available_clients.pop(0)
+    
+    elif strategy == "data_weighted":
+        weights = [registry[c]["data"] for c in available_clients]
+        selected = random.choices(available_clients, weights=weights, k=1)[0]
+        available_clients.remove(selected)
+        return selected
+        
+    elif strategy == "loss_weighted":
+        losses = [registry[c]["loss"] for c in available_clients]
+        max_loss = max(losses) if losses else 0
+        exp_weights = [math.exp((l - max_loss) / temperature) for l in losses]
+        selected = random.choices(available_clients, weights=exp_weights, k=1)[0]
+        available_clients.remove(selected)
+        return selected
+        
+    return available_clients.pop(0)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Global model evaluation
 # ──────────────────────────────────────────────────────────────────────────────
 
 def evaluate_global_model(
     model: torch.nn.Module,
-    # ### --- ENSEMBLE CHANGE: Now accepts a List of Fused Models per Phase --- ###
     phase_params_dict: Dict[int, List[List[np.ndarray]]], 
     test_loaders: List[DataLoader],
     device: torch.device,
 ) -> tuple:
-    """
-    Evaluates the global model. If a phase has multiple contexts, it runs the data
-    through ALL active adapters for that phase and averages the logits (Ensemble Inference).
-    """
     original_state = {k: v.clone() for k, v in model.state_dict().items()}
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
@@ -152,7 +181,6 @@ def evaluate_global_model(
 
     try:
         for phase_idx, phase_loader in enumerate(test_loaders):
-            # Dynamic adapter loading — fetch all active experts for this phase
             ensemble_params = phase_params_dict.get(phase_idx)
             if not ensemble_params:
                 latest_idx = max(phase_params_dict.keys())
@@ -169,7 +197,6 @@ def evaluate_global_model(
                     else:
                         continue
 
-                    # ### --- ENSEMBLE CHANGE: Run inference across all active adapters --- ###
                     ensemble_logits = 0
                     for params in ensemble_params:
                         state_dict = model.state_dict()
@@ -180,14 +207,10 @@ def evaluate_global_model(
                         outputs = model(images)
                         ensemble_logits += outputs
                         
-                    # Average the outputs across all adapters
                     ensemble_logits = ensemble_logits / len(ensemble_params)
-
                     loss = criterion(ensemble_logits, labels)
                     phase_loss += loss.item() * labels.size(0)
                     _, predicted = ensemble_logits.max(1)
-                    # -------------------------------------------------------------------------
-
                     total += labels.size(0)
                     correct += predicted.eq(labels).sum().item()
 
@@ -196,9 +219,7 @@ def evaluate_global_model(
             phase_accuracy = correct / max(total, 1)
             total_phases_loss += phase_loss / max(total, 1)
             metrics_dict[f"phase_{phase_idx}_accuracy"] = phase_accuracy
-
     finally:
-        # Always restore the model state
         model.load_state_dict(original_state)
 
     total_loss = total_phases_loss / max(len(test_loaders), 1)
@@ -206,6 +227,157 @@ def evaluate_global_model(
     metrics_dict["accuracy"] = total_accuracy
     return total_loss, metrics_dict
 
+def svd_merge_lora_weights(
+    w_a: List[np.ndarray],
+    w_b: List[np.ndarray],
+    n_a: float,
+    n_b: float,
+) -> List[np.ndarray]:
+    """
+    Fuses two LoRA weight parameter lists using Truncated SVD on the true 
+    low-rank delta matrices (B @ A) to eliminate cross-term noise.
+    Falls back to weighted averaging for 1D or un-paired tensors.
+    """
+    total_n = n_a + n_b
+    w_merged: List[np.ndarray] = []
+    i = 0
+
+    while i < len(w_a):
+        # Check if index i and i+1 form a 2D LoRA weight pair (A, B) or (B, A)
+        if i + 1 < len(w_a) and w_a[i].ndim == 2 and w_a[i + 1].ndim == 2:
+            m1_a, m2_a = w_a[i], w_a[i + 1]
+            m1_b, m2_b = w_b[i], w_b[i + 1]
+
+            # ── Case 1: m1 is A (r, in), m2 is B (out, r) ────────────────────
+            if m1_a.shape[0] == m2_a.shape[1] and m1_a.shape == m1_b.shape:
+                rank = m1_a.shape[0]
+                delta_a = np.dot(m2_a, m1_a)  # (out, in)
+                delta_b = np.dot(m2_b, m1_b)
+                delta_merged = (n_a * delta_a + n_b * delta_b) / total_n
+
+                U, S, Vt = np.linalg.svd(delta_merged, full_matrices=False)
+                sqrt_s = np.sqrt(np.maximum(S[:rank], 0.0))
+
+                B_new = U[:, :rank] * sqrt_s
+                A_new = sqrt_s[:, None] * Vt[:rank, :]
+
+                w_merged.append(A_new)
+                w_merged.append(B_new)
+                i += 2
+                continue
+
+            # ── Case 2: m1 is B (out, r), m2 is A (r, in) ────────────────────
+            elif m1_a.shape[1] == m2_a.shape[0] and m1_a.shape == m1_b.shape:
+                rank = m1_a.shape[1]
+                delta_a = np.dot(m1_a, m2_a)  # (out, in)
+                delta_b = np.dot(m1_b, m2_b)
+                delta_merged = (n_a * delta_a + n_b * delta_b) / total_n
+
+                U, S, Vt = np.linalg.svd(delta_merged, full_matrices=False)
+                sqrt_s = np.sqrt(np.maximum(S[:rank], 0.0))
+
+                B_new = U[:, :rank] * sqrt_s
+                A_new = sqrt_s[:, None] * Vt[:rank, :]
+
+                w_merged.append(B_new)
+                w_merged.append(A_new)
+                i += 2
+                continue
+
+        # Fallback: simple weighted averaging for biases or single tensors
+        w_merged.append((w_a[i] * n_a + w_b[i] * n_b) / total_n)
+        i += 1
+
+    return w_merged
+
+
+def merge_similar_contexts(
+    server_context_prototypes: Dict[int, np.ndarray],
+    context_adapters: Dict[int, Any],
+    context_strategies: Dict[int, AsynchronousStrategy],
+    context_assignments: Dict[int, int],
+    phase_to_context: Dict[int, set],
+    threshold: float,
+    updated_contexts: set,       
+    context_to_phase: Dict[int, int],
+    context_sample_counts: Dict[int, int],              
+):
+    print(f"DEBUG MERGE: updated_contexts={updated_contexts}, active_prototypes={list(server_context_prototypes.keys())}")
+    if not updated_contexts:
+        print("DEBUG MERGE: Exiting early because updated_contexts is empty!")
+        return
+
+    active_ids = list(server_context_prototypes.keys())
+    merged_this_round = set()
+
+    for id_a in list(updated_contexts):
+        if id_a in merged_this_round or id_a not in server_context_prototypes:
+            continue
+
+        for id_b in active_ids:
+            if id_a == id_b:
+                continue
+            if id_b in merged_this_round or id_b not in server_context_prototypes:
+                continue
+
+            # Strict task isolation: only merge adapters originating from the same phase
+            if context_to_phase.get(id_b) != context_to_phase.get(id_a):
+                continue
+
+            dist = calculate_cosine_distance(
+                server_context_prototypes[id_a],
+                server_context_prototypes[id_b],
+            )
+
+            if dist < threshold:
+                print(f"  [Context Bank] COLLAPSE (Phase {context_to_phase.get(id_a)}): Merging Context {id_b} into {id_a} (Dist: {dist:.3f})")
+
+                # Cumulative sample-mass weighting
+                n_a = float(context_sample_counts.get(id_a, 1))
+                n_b = float(context_sample_counts.get(id_b, 1))
+                total_n = n_a + n_b
+
+                print(f"    ↳ Weighting: Context {id_a} ({int(n_a)} samples, w={n_a/total_n:.2f}) vs "
+                      f"Context {id_b} ({int(n_b)} samples, w={n_b/total_n:.2f})")
+
+                # 1. Weighted Prototype Averaging with L2 Unit-Norm Projection
+                p_fused = (server_context_prototypes[id_a] * n_a + server_context_prototypes[id_b] * n_b) / total_n
+                p_norm = np.linalg.norm(p_fused)
+                server_context_prototypes[id_a] = p_fused / p_norm if p_norm > 0 else p_fused
+
+                # 2. Truncated SVD LoRA Weight Merging (Eliminates Cross-Term Noise)
+                w_a = parameters_to_ndarrays(context_adapters[id_a])
+                w_b = parameters_to_ndarrays(context_adapters[id_b])
+                w_merged = svd_merge_lora_weights(w_a, w_b, n_a, n_b)
+                context_adapters[id_a] = ndarrays_to_parameters(w_merged)
+
+                # 3. Accumulate Cumulative Sample Counts
+                context_sample_counts[id_a] = int(n_a + n_b)
+                if id_b in context_sample_counts:
+                    del context_sample_counts[id_b]
+
+                # 4. Reroute Routing Table
+                for c_idx, ctx_id in context_assignments.items():
+                    if ctx_id == id_b:
+                        context_assignments[c_idx] = id_a
+
+                # 5. Update Phase Trackers
+                for p_idx in phase_to_context:
+                    if id_b in phase_to_context[p_idx]:
+                        phase_to_context[p_idx].remove(id_b)
+                        phase_to_context[p_idx].add(id_a)
+
+                # 6. Garbage Collection
+                del server_context_prototypes[id_b]
+                del context_adapters[id_b]
+                if id_b in context_strategies:
+                    del context_strategies[id_b]
+                if id_b in context_to_phase:
+                    del context_to_phase[id_b]
+
+                merged_this_round.add(id_b)
+
+    updated_contexts.clear()
 # ──────────────────────────────────────────────────────────────────────────────
 # Main simulation entrypoint
 # ──────────────────────────────────────────────────────────────────────────────
@@ -222,7 +394,7 @@ def run_async_simulation(
 ):
     num_clients = len(train_loaders)
 
-    print(f"\nCreating {num_clients} simulated clients...")
+    print(f"\nCreating {num_clients} simulated client states...")
     clients = create_simulated_clients(
         num_clients=num_clients,
         model_fn=model_fn,
@@ -237,6 +409,7 @@ def run_async_simulation(
     )
 
     # ── Model & weight-index initialisation ───────────────────────────────────
+    merge_interval_evals = cfg.get("context", {}).get("merge_interval_evals", 3)
     global_model = model_fn().to(device)
     global_keys = list(global_model.state_dict().keys())
     global_params = [val.cpu().numpy() for _, val in global_model.state_dict().items()]
@@ -249,13 +422,8 @@ def run_async_simulation(
     global_arrays = [val.cpu().numpy() for _, val in global_model.state_dict().items()]
     init_base, init_lora = split_arrays(global_arrays, base_indices, lora_indices)
 
-    # Shared backbone (updated on every client result regardless of context)
     global_base_params = ndarrays_to_parameters(init_base)
-
-    # Context adapter bank:  context_id (int) → Flower Parameters (LoRA weights only)
-    context_adapters: Dict[int, Any] = (
-        {0: ndarrays_to_parameters(init_lora)} if use_lora else {}
-    )
+    context_adapters: Dict[int, Any] = {0: ndarrays_to_parameters(init_lora)} if use_lora else {}
 
     # ── Strategy factory ──────────────────────────────────────────────────────
     def create_strategy(samples: int, custom_alpha: Optional[float] = None) -> AsynchronousStrategy:
@@ -274,6 +442,9 @@ def run_async_simulation(
     # ── Phase & timing setup ──────────────────────────────────────────────────
     total_train_time = async_cfg["total_train_time"]
     waiting_interval = async_cfg["waiting_interval"]
+    client_strategy  = async_cfg["client_selection_strategy"]
+    temperature      = async_cfg["loss_temperature"]
+    print(f"[Scheduler] Client selection strategy: {client_strategy}")
 
     cl_enabled  = cfg.get("cl", {}).get("enabled", False)
     num_phases  = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
@@ -284,34 +455,30 @@ def run_async_simulation(
         for p in range(num_phases)
     ]
 
-    # ### --- ENSEMBLE CHANGE: RESTORED DUAL-SPEED ALPHAS --- ###
     base_strategy = create_strategy(phase_total_samples[0], custom_alpha=0.1)
     context_strategies: Dict[int, AsynchronousStrategy] = (
         {0: create_strategy(phase_total_samples[0], custom_alpha=0.9)} if use_lora else {}
     )
 
     # ── Context bank state ────────────────────────────────────────────────────
-    server_context_prototypes: List[np.ndarray] = []
+    server_context_prototypes: Dict[int, np.ndarray] = {}
+    next_context_id = 0
     context_distance_threshold = cfg.get("context", {}).get("threshold", 0.15)
     context_assignments: Dict[int, int] = {}   
-
-    # ### --- ENSEMBLE CHANGE: Upgrade to a SET to track all contexts seen in a phase --- ###
     phase_to_context: Dict[int, set] = {p: set() for p in range(num_phases)}
+    updated_contexts: set = set()
+    context_to_phase: Dict[int, int] = {0: 0}
+    context_sample_counts: Dict[int, int] = collections.defaultdict(int)
 
     history = AsyncHistory()
     param_lock = Lock()
-
-    # ── CL metric trackers ────────────────────────────────────────────────────
-    phase_max_accs     = [0.0] * num_phases
-    seen_phases: set   = set()
+    phase_max_accs = [0.0] * num_phases
+    seen_phases: set = set()
     current_global_phase = 0
 
     # ── Initial evaluation ────────────────────────────────────────────────────
     if use_lora:
-        _initial_combined = combine_arrays(
-            init_base, init_lora, base_indices, lora_indices, total_param_len
-        )
-        # Note: Initial dictionary now passes Lists of Lists to match Ensemble signature
+        _initial_combined = combine_arrays(init_base, init_lora, base_indices, lora_indices, total_param_len)
         initial_params_dict = {p_idx: [_initial_combined] for p_idx in range(num_phases)}
     else:
         initial_params_dict = {p_idx: [global_params] for p_idx in range(num_phases)}
@@ -332,47 +499,67 @@ def run_async_simulation(
     update_count = 0
 
     # ── Inner aggregation callback ─────────────────────────────────────────────
+   # ── Inner aggregation callback ─────────────────────────────────────────────
     def aggregate_result(client_idx: int, fit_res, phase_idx: int) -> float:
-        nonlocal global_base_params, update_count, server_context_prototypes
+        nonlocal global_base_params, update_count, server_context_prototypes, next_context_id
         t_diff   = time.time() - fit_res.metrics.get("start_timestamp", time.time())
         proto_str = fit_res.metrics.get("prototype", None)
 
         with param_lock:
-            # ── 1. CONTEXT DETECTION ─────────────────────────────────────────
+            # ── 1. CONTEXT ROUTING (STRICT PHASE ISOLATION & L2 PROJECTION) ───
             if proto_str is not None:
-                incoming_proto = np.array(json.loads(proto_str))
+                incoming_proto = np.array(json.loads(proto_str), dtype=np.float32)
+                
+                # 1. Normalize incoming vector to unit length
+                in_norm = np.linalg.norm(incoming_proto)
+                if in_norm > 1e-8:
+                    incoming_proto = incoming_proto / in_norm
 
-                if len(server_context_prototypes) == 0:
-                    server_context_prototypes.append(incoming_proto)
-                    assigned_context = 0
-                    print(f"  [Context Bank] Vehicle {client_idx} established Initial Context 0.")
+                # 2. ISOLATION FIX: Filter prototypes to ONLY those belonging to the active phase so that others cant pollute phase representative prototypes
+                phase_ctx_keys = [
+                    k for k in server_context_prototypes.keys()
+                    if context_to_phase.get(k) == phase_idx
+                ]
+
+                if len(phase_ctx_keys) == 0:
+                    # First context established for this phase
+                    assigned_context = next_context_id
+                    server_context_prototypes[assigned_context] = incoming_proto
+                    context_to_phase[assigned_context] = phase_idx
+                    next_context_id += 1
+                    print(f"  [Context Bank] Vehicle {client_idx} established Initial Context {assigned_context} for Phase {phase_idx}.")
                 else:
-                    distances  = [
-                        calculate_cosine_distance(incoming_proto, p)
-                        for p in server_context_prototypes
+                    # Compare only against active phase prototypes
+                    distances = [
+                        calculate_cosine_distance(incoming_proto, server_context_prototypes[k]) 
+                        for k in phase_ctx_keys
                     ]
-                    min_dist   = min(distances)
-                    closest_idx = distances.index(min_dist)
+                    min_dist = min(distances)
+                    closest_ctx = phase_ctx_keys[distances.index(min_dist)]
 
                     if min_dist < context_distance_threshold:
-                        server_context_prototypes[closest_idx] = (
-                            0.9 * server_context_prototypes[closest_idx]
-                            + 0.1 * incoming_proto
-                        )
-                        assigned_context = closest_idx
-                        print(f"  [Context Bank] Vehicle {client_idx} assigned Context {assigned_context}")
+                        # 3. EMA update with radial unit-norm re-projection (prevents Cauchy-Schwarz shrinkage)
+                        updated = 0.9 * server_context_prototypes[closest_ctx] + 0.1 * incoming_proto
+                        up_norm = np.linalg.norm(updated)
+                        server_context_prototypes[closest_ctx] = updated / up_norm if up_norm > 1e-8 else updated
+                        
+                        assigned_context = closest_ctx
+                        print(f"  [Context Bank] Vehicle {client_idx} assigned Context {assigned_context} in Phase {phase_idx} (Dist: {min_dist:.3f})")
                     else:
-                        server_context_prototypes.append(incoming_proto)
-                        assigned_context = len(server_context_prototypes) - 1
-                        print(f"  [Context Bank] Vehicle {client_idx} generated NEW Context {assigned_context} (Cos Dist: {min_dist:.3f})")
+                        # Spawn new context inside the active phase
+                        assigned_context = next_context_id
+                        server_context_prototypes[assigned_context] = incoming_proto
+                        context_to_phase[assigned_context] = phase_idx
+                        next_context_id += 1
+                        print(f"  [Context Bank] Vehicle {client_idx} generated NEW Context {assigned_context} in Phase {phase_idx} (Cos Dist: {min_dist:.3f})")
 
                 context_assignments[client_idx] = assigned_context
-
-                # ### --- ENSEMBLE CHANGE: Add context to the SET for this phase --- ###
                 phase_to_context[phase_idx].add(assigned_context)
-
             else:
-                assigned_context = context_assignments.get(client_idx, 0)
+                # Fallback: guarantee fallback context belongs to the current phase
+                assigned_context = context_assignments.get(client_idx, None)
+                if assigned_context is None or context_to_phase.get(assigned_context) != phase_idx:
+                    assigned_context = max(phase_to_context[phase_idx]) if phase_to_context[phase_idx] else 0
 
             # ── 2. UNPACK INCOMING WEIGHTS ───────────────────────────────────
             incoming_arrays = parameters_to_ndarrays(fit_res.parameters)
@@ -382,61 +569,76 @@ def run_async_simulation(
             old_base = parameters_to_ndarrays(global_base_params)
             base_strategy.total_samples = phase_total_samples[phase_idx]
             global_base_params = base_strategy.average(
-                global_base_params,
-                ndarrays_to_parameters(inc_base),
-                t_diff,
-                fit_res.num_examples,
+                global_base_params, ndarrays_to_parameters(inc_base), t_diff, fit_res.num_examples,
             )
-            new_base   = parameters_to_ndarrays(global_base_params)
-            base_shift = calculate_weight_shift(old_base, new_base)
+            base_shift = calculate_weight_shift(old_base, parameters_to_ndarrays(global_base_params))
 
-            # ── 4. UPDATE CONTEXT ADAPTER (domain specialisation) ────────────
+            # ── 4. UPDATE SPECIALIZED LORA ADAPTER ────────────────────────────
             lora_shift: Any = 0.0
             if use_lora:
                 if assigned_context not in context_adapters:
-                    # ### --- ENSEMBLE CHANGE: REVERT FIX #7 (EXPERT POISONING) --- ###
-                    # We initialize the adapter purely with the discovering client's weights
                     context_adapters[assigned_context] = ndarrays_to_parameters(inc_lora)
                     context_strategies[assigned_context] = create_strategy(phase_total_samples[phase_idx], custom_alpha=0.9)
                     lora_shift = "INITIALIZED"
                 else:
-                    # Only average if the adapter is already established
                     old_lora = parameters_to_ndarrays(context_adapters[assigned_context])
                     context_strategies[assigned_context].total_samples = phase_total_samples[phase_idx]
                     context_adapters[assigned_context] = context_strategies[assigned_context].average(
-                        context_adapters[assigned_context],
-                        ndarrays_to_parameters(inc_lora),
-                        t_diff,
-                        fit_res.num_examples,
+                        context_adapters[assigned_context], ndarrays_to_parameters(inc_lora), t_diff, fit_res.num_examples,
                     )
-                    new_lora = parameters_to_ndarrays(context_adapters[assigned_context])
-                    lora_shift = f"{calculate_weight_shift(old_lora, new_lora):.4f}"
+                    lora_shift = f"{calculate_weight_shift(old_lora, parameters_to_ndarrays(context_adapters[assigned_context])):.4f}"
 
-            print(
-                f"  [Weight Shift] Vehicle {client_idx} | "
-                f"Base: {base_shift:.4f} | LoRA {assigned_context}: {lora_shift}"
-            )
+                # Safe sample-count accumulation
+                context_sample_counts[assigned_context] = (
+                    context_sample_counts.get(assigned_context, 0) + fit_res.num_examples
+                )
 
+            print(f"  [Weight Shift] Vehicle {client_idx} | Base: {base_shift:.4f} | LoRA {assigned_context}: {lora_shift}")
+
+        updated_contexts.add(assigned_context)
         update_count += 1
         return t_diff
-
-    # ── Ray cluster setup ──────────────────────────────────────────────────────
+    # ── Ray Cluster & Worker Pool Setup ─────────────────────────────────────────
     if not ray.is_initialized():
         ray.init(ignore_reinit_error=True, include_dashboard=False)
 
-    print(f"\nDeploying {num_clients} stateful vehicle actors to the Ray cluster...")
-    ray_actors: Dict[int, Any] = {}
-    for i in range(num_clients):
-        actor = AsyncRayClientActor.options(
+    max_workers = async_cfg.get("max_workers")
+    if not max_workers:
+        total_cpus = ray.cluster_resources().get("CPU", 1.0)
+        cpus_per_client = cfg.client.num_cpus or 1.0
+        max_workers = max(1, int(total_cpus // cpus_per_client))
+        print(f"[Ray] Auto-detected hardware concurrency limit: {max_workers} active tasks")
+
+   
+    print(f"\nLoading {num_clients} client datasets into Ray Shared Memory (Plasma)...")
+    client_refs = {i: ray.put(clients[i]) for i in range(num_clients)}
+
+    print(f"\nDeploying pool of {max_workers} generic Worker Actors to the Ray cluster...")
+    
+    workers = [
+        AsyncWorkerActor.options(
             num_cpus=cfg.client.num_cpus,
             num_gpus=cfg.client.num_gpus,
-        ).remote(client_idx=i, client_obj=clients[i])
-        ray_actors[i] = actor
+        ).remote()
+        for _ in range(max_workers)
+    ]
 
-    active_tasks: Dict[Any, int] = {}
+    # ── Initial Dispatch ────────────────────────────────────────────────────────
+    client_registry = {i: {"data": 1.0, "loss": 1.0} for i in range(num_clients)}
+    available_clients = list(range(num_clients))
+    unique_vehicles_trained = set()
+    
+    # Track the active tasks mapped to a Tuple of (WorkerActor, Client_Idx)
+    active_tasks: Dict[Any, Tuple[Any, int]] = {}
     eval_counter, last_eval_time = 0, start_time
-
-    for client_idx, actor in ray_actors.items():
+    
+    for worker in workers:
+        if not available_clients:
+            break
+        client_idx = get_next_client(client_strategy, client_registry, available_clients, temperature)
+        unique_vehicles_trained.add(client_idx)
+        print(f"  [Scheduler] Init Dispatch -> Assigned Vehicle {client_idx} to a generic worker.")
+        
         with param_lock:
             if use_lora:
                 combined = combine_arrays(
@@ -447,36 +649,52 @@ def run_async_simulation(
                 params = ndarrays_to_parameters(combined)
             else:
                 params = global_base_params
-        task = actor.fit.remote(params, time.time(), current_phase=0)
-        active_tasks[task] = client_idx
+                
+        # Send the client state to the worker pool
+        task = worker.fit.remote(client_idx, client_refs[client_idx], params, time.time(), current_phase=0)
+        active_tasks[task] = (worker, client_idx)
 
     # ── Main async event loop ──────────────────────────────────────────────────
     while time.time() < end_time and active_tasks:
         ready_tasks, _ = ray.wait(list(active_tasks.keys()), num_returns=1, timeout=0.1)
 
         for task in ready_tasks:
-            client_idx = active_tasks.pop(task)
+            # Pop the task to retrieve both the generic worker and the completed client ID
+            worker, returned_client_idx = active_tasks.pop(task)
+            
             try:
-                returned_client_idx, fit_res, returned_phase = ray.get(task)
-                t_diff = aggregate_result(returned_client_idx, fit_res, returned_phase)
+                client_idx_from_tuple, fit_res, returned_phase = ray.get(task)
+                t_diff = aggregate_result(client_idx_from_tuple, fit_res, returned_phase)
+                
+                client_registry[client_idx_from_tuple]["data"] = fit_res.num_examples
+                client_registry[client_idx_from_tuple]["loss"] = fit_res.metrics.get("loss", 1.0)
+                available_clients.append(client_idx_from_tuple)
+                
                 print(
                     f"[Phase: {returned_phase}] [t={time.time() - start_time:.1f}s] "
-                    f"Vehicle {client_idx} completed "
-                    f"(loss: {fit_res.metrics.get('loss', 0):.4f})"
+                    f"Vehicle {client_idx_from_tuple} completed (loss: {fit_res.metrics.get('loss', 0):.4f})"
                 )
             except Exception as e:
-                print(f"[Error] Vehicle {client_idx} failed: {e}")
+                print(f"[Error] Vehicle {returned_client_idx} failed: {e}")
                 import traceback
                 traceback.print_exc()
-                continue
-
+                available_clients.append(returned_client_idx)
+                
+            # Dispatch a new task specifically to the worker that just finished
             if time.time() < end_time:
+                next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
+                unique_vehicles_trained.add(next_client)
+                
+                print(
+                    f"  [Scheduler] Handoff: Vehicle {returned_client_idx} finished -> "
+                    f"Dispatched Vehicle {next_client} to the freed worker. "
+                    f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
+                )
+                
                 with param_lock:
-                    assigned_context = context_assignments.get(client_idx, 0)
+                    assigned_context = context_assignments.get(next_client, 0)
                     if use_lora:
-                        assigned_adapter = context_adapters.get(
-                            assigned_context, context_adapters[0]
-                        )
+                        assigned_adapter = context_adapters.get(assigned_context, context_adapters[0])
                         combined = combine_arrays(
                             parameters_to_ndarrays(global_base_params),
                             parameters_to_ndarrays(assigned_adapter),
@@ -488,31 +706,40 @@ def run_async_simulation(
 
                 elapsed = time.time() - start_time
                 current_phase = min(int(elapsed / phase_duration), num_phases - 1)
+                
                 if current_phase > current_global_phase:
                     print(f"\n{'='*50}")
-                    print(
-                        f"[Server] SHIFTING PHASE: Transitioning to Phase "
-                        f"{current_phase} at t={elapsed:.1f}s"
-                    )
+                    print(f"[Server] SHIFTING PHASE: Transitioning to Phase {current_phase} at t={elapsed:.1f}s")
                     print(f"{'='*50}\n")
                     current_global_phase = current_phase
 
-                new_task = ray_actors[client_idx].fit.remote(params, time.time(), current_phase)
-                active_tasks[new_task] = client_idx
+                new_task = worker.fit.remote(next_client, client_refs[next_client], params, time.time(), current_phase)
+                active_tasks[new_task] = (worker, next_client)
 
         # ── Periodic evaluation ────────────────────────────────────────────────
         if time.time() - last_eval_time >= waiting_interval:
             eval_counter += 1
-            
-            # ### --- ENSEMBLE CHANGE: Build a List of Fused Models per Phase --- ###
             eval_params_dict: Dict[int, List[List[np.ndarray]]] = {}
-
             with param_lock:
+                if use_lora and updated_contexts and (eval_counter % merge_interval_evals == 0):
+                    merge_similar_contexts(
+                        server_context_prototypes=server_context_prototypes,
+                        context_adapters=context_adapters,
+                        context_strategies=context_strategies,
+                        context_assignments=context_assignments,
+                        phase_to_context=phase_to_context,
+                        threshold=context_distance_threshold,
+                        updated_contexts=updated_contexts,         
+                        context_to_phase=context_to_phase, 
+                        context_sample_counts=context_sample_counts,
+            )
+            
+
+            
                 if use_lora:
                     for p_idx in range(num_phases):
                         active_contexts = phase_to_context.get(p_idx, set())
                         if not active_contexts:
-                            # Fallback if phase hasn't started yet
                             active_contexts = {max(context_adapters.keys()) if context_adapters else 0}
                             
                         fused_models_for_phase = []
@@ -524,54 +751,35 @@ def run_async_simulation(
                                 base_indices, lora_indices, total_param_len,
                             )
                             fused_models_for_phase.append(combined_eval)
-                            
                         eval_params_dict[p_idx] = fused_models_for_phase
                 else:
                     for p_idx in range(num_phases):
                         eval_params_dict[p_idx] = [parameters_to_ndarrays(global_base_params)]
 
-            loss, metrics_dict = evaluate_global_model(
-                global_model, eval_params_dict, global_test_loaders, device
-            )
+            loss, metrics_dict = evaluate_global_model(global_model, eval_params_dict, global_test_loaders, device)
 
-            # ── CL metrics ────────────────────────────────────────────────────
             phase_accuracies = [metrics_dict[f"phase_{i}_accuracy"] for i in range(num_phases)]
             seen_phases.add(current_global_phase)
-            phase_max_accs[current_global_phase] = max(
-                phase_max_accs[current_global_phase],
-                phase_accuracies[current_global_phase],
-            )
+            phase_max_accs[current_global_phase] = max(phase_max_accs[current_global_phase], phase_accuracies[current_global_phase])
 
             bwt, fwt = 0.0, 0.0
             if current_global_phase > 0:
-                bwt = (
-                    sum(
-                        phase_accuracies[p] - phase_max_accs[p]
-                        for p in range(current_global_phase)
-                    )
-                    / current_global_phase
-                )
+                bwt = sum(phase_accuracies[p] - phase_max_accs[p] for p in range(current_global_phase)) / current_global_phase
             if current_global_phase < num_phases - 1:
                 remaining = num_phases - current_global_phase - 1
-                fwt = (
-                    sum(
-                        phase_accuracies[p] - initial_phase_acc[p]
-                        for p in range(current_global_phase + 1, num_phases)
-                    )
-                    / remaining
-                )
+                fwt = sum(phase_accuracies[p] - initial_phase_acc[p] for p in range(current_global_phase + 1, num_phases)) / remaining
             avg_seen_acc = sum(phase_accuracies[p] for p in seen_phases) / len(seen_phases)
 
-            metrics_dict["bwt"]          = bwt
-            metrics_dict["fwt"]          = fwt
+            metrics_dict["bwt"] = bwt
+            metrics_dict["fwt"] = fwt
             metrics_dict["avg_seen_acc"] = avg_seen_acc
 
             acc = metrics_dict.pop("accuracy")
             print(
                 f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: "
-                f"Loss: {loss:.4f}, Accuracy: {acc:.4f}, "
-                f"BWT: {bwt:.4f}, FWT: {fwt:.4f}\n"
+                f"Loss: {loss:.4f}, Accuracy: {acc:.4f}, BWT: {bwt:.4f}, FWT: {fwt:.4f}"
             )
+            print(f"  [Scheduler Health] {len(unique_vehicles_trained)} out of {num_clients} total vehicles have participated so far.\n")
 
             if wandb_enabled:
                 log_dict = {
@@ -589,8 +797,8 @@ def run_async_simulation(
             last_eval_time = time.time()
 
     # ── Teardown ───────────────────────────────────────────────────────────────
-    for actor in ray_actors.values():
-        ray.kill(actor)
+    for worker in workers:
+        ray.kill(worker)
     ray.shutdown()
 
     # ── Final evaluation ───────────────────────────────────────────────────────
@@ -611,15 +819,12 @@ def run_async_simulation(
                         base_indices, lora_indices, total_param_len,
                     )
                     fused_models_for_phase.append(combined_eval)
-                    
                 final_params_dict[p_idx] = fused_models_for_phase
         else:
             for p_idx in range(num_phases):
                 final_params_dict[p_idx] = [parameters_to_ndarrays(global_base_params)]
 
-    final_loss, final_metrics = evaluate_global_model(
-        global_model, final_params_dict, global_test_loaders, device
-    )
+    final_loss, final_metrics = evaluate_global_model(global_model, final_params_dict, global_test_loaders, device)
 
     return {
         "final_loss":     final_loss,
