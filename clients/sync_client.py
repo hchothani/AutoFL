@@ -9,6 +9,8 @@ import torch.optim as optim
 from typing import Dict, List, Tuple
 import numpy as np
 
+from utils.compression_utils import compress_prototype
+
 class SyncSimulatedClient(fl.client.NumPyClient):
     """A clean, standard synchronous Flower client."""
     
@@ -104,9 +106,20 @@ class SyncSimulatedClient(fl.client.NumPyClient):
         finally:
             hook_handle.remove() # Always clean up
 
-        # Calculate perfect centroid
+        # Calculate perfect centroid with external prototype compression
         if feature_count > 0:
-            client_prototype = (feature_sum / feature_count).tolist()
+            raw_proto = feature_sum / feature_count
+            compression_cfg = self.cfg.get("context", {}).get("compression", {})
+            if compression_cfg.get("enabled", True):
+                compressed_proto = compress_prototype(
+                    raw_proto,
+                    target_dim=compression_cfg.get("target_dim", 84),
+                    centering=compression_cfg.get("centering", True),
+                    seed=compression_cfg.get("seed", 42)
+                )
+                client_prototype = compressed_proto.tolist()
+            else:
+                client_prototype = raw_proto.tolist()
         else:
             client_prototype = None
 

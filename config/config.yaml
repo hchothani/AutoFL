@@ -30,6 +30,12 @@ model:
 
 context:
   enabled: false
+  threshold: auto
+  compression:
+    enabled: true
+    target_dim: 84
+    centering: true
+    seed: 42
 
 lora:
   enabled: false
