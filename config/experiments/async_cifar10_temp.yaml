@@ -1,13 +1,22 @@
 async:
   enabled: true
+  client_selection_strategy: round_robin
+  loss_temperature: 1.0
+  total_train_time: 900
 
 cl:
   enabled: true
   num_experiences: 5
 
+model:
+  name: resnet18
+
 context:
   enabled: true
-  threshold: 0.4
+  threshold: 0.15
+  target_proto_dim: 84
+  merge_threshold: 0.06
+  merge_interval_evals: 3
 
 dataset:
   workoload: cifar10
@@ -15,3 +24,8 @@ dataset:
 
 lora:
   enabled: true
+
+client:
+  num_cpus: 2
+  num_gpus: 0.20
+

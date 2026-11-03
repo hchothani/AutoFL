@@ -2,24 +2,25 @@
 async_runner.py  —  Asynchronous Federated Learning with Context-Aware LoRA Adapter Bank
 =========================================================================================
 
-CHANGE LOG: Dynamic Ray Scheduling + Prototype Centering & QR Projection (No Merge)
+CHANGE LOG: Dynamic Ray Scheduling + Real-World Context-Aware BN & QR Projection
 ─────────────────────────────────────────────────────────────────────────────────────────
 [UPGRADE]  Dynamic Scheduler & Worker Pool: Implemented Round Robin, Data Weighted, and 
            Loss Weighted sampling. Utilizes a fixed Ray Worker Pool to guarantee zero 
            resource starvation and eliminate autoscaler bottlenecks.
-[UPGRADE]  Global Mean-Centering (Method 1): Tracks an online running centroid μ_global 
-           on the server to strip the positive ReLU DC component, widening inter-task 
-           angular separation from [0.05, 0.15] to [0.30, 0.70].
-[UPGRADE]  Orthogonal Random Projection (Method 2): Computes a deterministic projection 
-           matrix W_proj ∈ ℝ^(84 × D) via QR decomposition (W_proj @ W_proj.T = I). 
-           Preserves pairwise metric geometry (Johnson-Lindenstrauss lemma) while 
-           compressing all backbones down to the canonical 84-D SimpleCNN space.
+[UPGRADE]  Non-Intrusive SimpleCNN Path + High-Dim QR Projection: Leaves 84-D SimpleCNN
+           completely untouched (no QR decomposition). For high-dim backbones (D > 84,
+           e.g. ResNet-18 512-D), applies stateless intra-vector channel standardization
+           followed by orthonormal QR projection (W_proj @ W_proj.T = I).
+[UPGRADE]  Real-World Context-Aware BatchNorm Isolation: For models with BatchNorm
+           (ResNet-18), stores BN running stats & head inside each Context Adapter so
+           pure `model.eval()` never suffers cross-context running_mean drift.
 [RESTORED] Dual-Speed Alphas: Base strategy updates slowly (0.1) to preserve FWT/BWT, 
            while Context Adapters update rapidly (0.9).
 [RESTORED] Expert Initialization: New contexts use the raw incoming client LoRA weights 
            as their pure foundation, rather than averaging them with initialized zeroes.
-[UPGRADE]  Ensemble Inference: `phase_to_context` tracks all contexts seen in a phase. 
-           The evaluator fuses all active adapters for a phase and averages their logits.
+[UPGRADE]  Fast Ensemble Inference: Pre-loads adapter tensors on device, normalizes
+           per-adapter logit magnitudes, and pauses the training clock during benchmark
+           evaluation so evaluation overhead never starves later phases.
 ─────────────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -65,6 +66,7 @@ def get_projection_matrix(d_in: int, d_out: int = 84, seed: int = 42) -> np.ndar
     Q, _ = np.linalg.qr(G)
     return Q.T.astype(np.float32)
 
+
 def calculate_cosine_distance(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     """Returns 1 - cosine_similarity. Returns 1.0 (max distance) for zero vectors."""
     norm_a, norm_b = np.linalg.norm(vec_a), np.linalg.norm(vec_b)
@@ -73,6 +75,7 @@ def calculate_cosine_distance(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     sim = np.dot(vec_a, vec_b) / (norm_a * norm_b)
     return 1.0 - float(np.clip(sim, -1.0, 1.0))
 
+
 def split_arrays(
     flat_arrays: List[np.ndarray],
     base_idx: List[int],
@@ -80,6 +83,7 @@ def split_arrays(
 ) -> tuple:
     """Slice a flat weight list into (base_weights, lora_weights)."""
     return [flat_arrays[i] for i in base_idx], [flat_arrays[i] for i in lora_idx]
+
 
 def combine_arrays(
     base_arrays: List[np.ndarray],
@@ -96,6 +100,7 @@ def combine_arrays(
         combined[i] = val
     return combined  # type: ignore[return-value]
 
+
 def calculate_weight_shift(
     old_params_list: List[np.ndarray],
     new_params_list: List[np.ndarray],
@@ -104,6 +109,7 @@ def calculate_weight_shift(
     return float(
         sum(np.sum(np.abs(old - new)) for old, new in zip(old_params_list, new_params_list))
     )
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Generic Ray Worker Actor (Stateless)
@@ -121,6 +127,7 @@ class AsyncWorkerActor:
         }
         fit_res = client_obj.fit(FitIns(parameters=params, config=config))
         return client_idx, fit_res, current_phase
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config helper
@@ -151,6 +158,7 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
         "loss_temperature":           async_cfg.get("loss_temperature",       1.0),
     }
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Client Scheduler
 # ──────────────────────────────────────────────────────────────────────────────
@@ -179,8 +187,9 @@ def get_next_client(strategy: str, registry: dict, available_clients: list, temp
         
     return available_clients.pop(0)
 
+
 # ──────────────────────────────────────────────────────────────────────────────
-# Global model evaluation
+# Global model evaluation (Pure model.eval(), pre-loaded state_dicts)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def evaluate_global_model(
@@ -190,6 +199,7 @@ def evaluate_global_model(
     device: torch.device,
 ) -> tuple:
     original_state = {k: v.clone() for k, v in model.state_dict().items()}
+    template_keys = list(original_state.keys())
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
 
@@ -205,33 +215,58 @@ def evaluate_global_model(
                 latest_idx = max(phase_params_dict.keys())
                 ensemble_params = phase_params_dict[latest_idx]
 
+            # Pre-build device state_dicts ONCE per phase (outside the batch loop)
+            # and preserve exact tensor dtypes (prevents int64 num_batches_tracked corruption).
+            prepared_states = [
+                {
+                    key: torch.as_tensor(param, dtype=original_state[key].dtype, device=device)
+                    for key, param in zip(template_keys, params)
+                }
+                for params in ensemble_params
+            ]
+
             phase_loss, correct, total = 0.0, 0, 0
             with torch.no_grad():
-                for batch in phase_loader:
-                    if isinstance(batch, dict):
-                        images = batch.get("img", batch.get("x")).to(device)
-                        labels = batch.get("label", batch.get("y")).to(device)
-                    elif isinstance(batch, (tuple, list)):
-                        images, labels = batch[0].to(device), batch[1].to(device)
-                    else:
-                        continue
+                if len(prepared_states) == 1:
+                    model.load_state_dict(prepared_states[0])
+                    for batch in phase_loader:
+                        if isinstance(batch, dict):
+                            images = batch.get("img", batch.get("x")).to(device)
+                            labels = batch.get("label", batch.get("y")).to(device)
+                        elif isinstance(batch, (tuple, list)):
+                            images, labels = batch[0].to(device), batch[1].to(device)
+                        else:
+                            continue
 
-                    ensemble_logits = 0
-                    for params in ensemble_params:
-                        state_dict = model.state_dict()
-                        for key, param in zip(state_dict.keys(), params):
-                            state_dict[key] = torch.tensor(param).to(device)
-                        model.load_state_dict(state_dict)
-                        
                         outputs = model(images)
-                        ensemble_logits += outputs
-                        
-                    ensemble_logits = ensemble_logits / len(ensemble_params)
-                    loss = criterion(ensemble_logits, labels)
-                    phase_loss += loss.item() * labels.size(0)
-                    _, predicted = ensemble_logits.max(1)
-                    total += labels.size(0)
-                    correct += predicted.eq(labels).sum().item()
+                        loss = criterion(outputs, labels)
+                        phase_loss += loss.item() * labels.size(0)
+                        _, predicted = outputs.max(1)
+                        total += labels.size(0)
+                        correct += predicted.eq(labels).sum().item()
+                else:
+                    for batch in phase_loader:
+                        if isinstance(batch, dict):
+                            images = batch.get("img", batch.get("x")).to(device)
+                            labels = batch.get("label", batch.get("y")).to(device)
+                        elif isinstance(batch, (tuple, list)):
+                            images, labels = batch[0].to(device), batch[1].to(device)
+                        else:
+                            continue
+
+                        ensemble_logits = 0
+                        for state_dict in prepared_states:
+                            model.load_state_dict(state_dict)
+                            outputs = model(images)
+                            out_norm = torch.norm(outputs, p=2, dim=1, keepdim=True)
+                            ensemble_logits += outputs / torch.clamp(out_norm, min=1e-8)
+
+                        ensemble_logits = ensemble_logits / len(prepared_states)
+                        loss = criterion(ensemble_logits, labels)
+                        phase_loss += loss.item() * labels.size(0)
+                        _, predicted = ensemble_logits.max(1)
+                        total += labels.size(0)
+                        correct += predicted.eq(labels).sum().item()
 
             total_total += total
             total_correct += correct
@@ -245,6 +280,7 @@ def evaluate_global_model(
     total_accuracy = total_correct / max(total_total, 1)
     metrics_dict["accuracy"] = total_accuracy
     return total_loss, metrics_dict
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Main simulation entrypoint
@@ -281,8 +317,23 @@ def run_async_simulation(
     global_keys = list(global_model.state_dict().keys())
     global_params = [val.cpu().numpy() for _, val in global_model.state_dict().items()]
 
-    base_indices = [i for i, k in enumerate(global_keys) if "lora" not in k]
-    lora_indices = [i for i, k in enumerate(global_keys) if "lora" in k]
+    # Context-Aware BatchNorm & Head Isolation:
+    # - For SimpleCNN (has_bn == False): Strictly uses "lora" in k (100% untouched).
+    # - For ResNet-18 (has_bn == True): Keeps BatchNorm running stats & final classifier head
+    #   inside each Context Adapter so `model.eval()` never suffers cross-context BN drift.
+    has_bn = any("running_mean" in k for k in global_keys)
+    if has_bn:
+        context_key_tokens = ("lora", "bn", "running_", "num_batches_tracked", "downsample.1", "fc", "linear")
+        lora_indices = [
+            i for i, k in enumerate(global_keys)
+            if any(tok in k for tok in context_key_tokens)
+        ]
+        lora_set = set(lora_indices)
+        base_indices = [i for i in range(len(global_keys)) if i not in lora_set]
+    else:
+        base_indices = [i for i, k in enumerate(global_keys) if "lora" not in k]
+        lora_indices = [i for i, k in enumerate(global_keys) if "lora" in k]
+
     use_lora = len(lora_indices) > 0
     total_param_len = len(global_keys)
 
@@ -335,10 +386,8 @@ def run_async_simulation(
     phase_to_context: Dict[int, set] = {p: set() for p in range(num_phases)}
     context_to_phase: Dict[int, int] = {0: 0}
 
-    # Prototype Compression & Centering State
+    # Prototype Compression State
     target_proto_dim: int = cfg.get("context", {}).get("target_proto_dim", 84)
-    mu_global: Optional[np.ndarray] = None
-    total_proto_count: int = 0
     w_proj: Optional[np.ndarray] = None
 
     history = AsyncHistory()
@@ -372,39 +421,44 @@ def run_async_simulation(
     # ── Inner aggregation callback ─────────────────────────────────────────────
     def aggregate_result(client_idx: int, fit_res, phase_idx: int) -> float:
         nonlocal global_base_params, update_count, server_context_prototypes, next_context_id
-        nonlocal mu_global, total_proto_count, w_proj
+        nonlocal w_proj
 
-        t_diff   = time.time() - fit_res.metrics.get("start_timestamp", time.time())
+        t_diff    = time.time() - fit_res.metrics.get("start_timestamp", time.time())
         proto_str = fit_res.metrics.get("prototype", None)
 
         with param_lock:
-            # ── 1. CONTEXT ROUTING (CENTERING + ORTHOGONAL QR PROJECTION) ─────
+            # ── 1. CONTEXT ROUTING (NATIVE 84-D OR HIGH-DIM QR PROJECTION) ────
             if proto_str is not None:
                 raw_proto = np.array(json.loads(proto_str), dtype=np.float32)
 
-                # Initialize running centroid and projection matrix on first arrival
-                if mu_global is None:
-                    mu_global = np.zeros_like(raw_proto)
-                    w_proj = get_projection_matrix(
-                        d_in=raw_proto.shape[0],
-                        d_out=target_proto_dim,
-                        seed=42
-                    )
-                    print(f"  [Context Bank] Initialized QR W_proj: {raw_proto.shape[0]}-D -> {target_proto_dim}-D")
+                # Keep non-QR SimpleCNN (d_in <= 84) 100% untouched.
+                # Only run channel standardization + QR projection on high-dim models (e.g. ResNet 512-D).
+                if raw_proto.shape[0] <= target_proto_dim:
+                    raw_norm = np.linalg.norm(raw_proto)
+                    incoming_proto = (raw_proto / raw_norm) if raw_norm > 1e-8 else raw_proto
+                else:
+                    if w_proj is None:
+                        w_proj = get_projection_matrix(
+                            d_in=raw_proto.shape[0],
+                            d_out=target_proto_dim,
+                            seed=42,
+                        )
+                        print(f"  [Context Bank] Initialized QR W_proj: {raw_proto.shape[0]}-D -> {target_proto_dim}-D")
 
-                # Step 1: Update online fleet-wide running centroid
-                total_proto_count += 1
-                mu_global += (raw_proto - mu_global) / total_proto_count
+                    # Step 1: Stateless intra-vector channel standardization (removes positive ReLU GAP floor)
+                    proto_std = np.std(raw_proto)
+                    p_centered = (raw_proto - np.mean(raw_proto)) / (proto_std if proto_std > 1e-8 else 1.0)
 
-                # Step 2: Mean-Center (Method 1: breaks positive ReLU orthant cone)
-                p_centered = raw_proto - mu_global
+                    # Step 2: Unit L2 normalize in native D-space
+                    raw_norm = np.linalg.norm(p_centered)
+                    p_unit = (p_centered / raw_norm) if raw_norm > 1e-8 else p_centered
 
-                # Step 3: Orthogonal Random Projection (Method 2: JL isometric compression)
-                p_projected = np.dot(w_proj, p_centered)
+                    # Step 3: Isometric QR Random Projection (512-D -> 84-D)
+                    p_projected = np.dot(w_proj, p_unit)
 
-                # Step 4: Unit L2 Normalization for stable cosine metric clustering
-                p_norm = np.linalg.norm(p_projected)
-                incoming_proto = (p_projected / p_norm) if p_norm > 1e-8 else p_projected
+                    # Step 4: Unit L2 Normalization in 84-D
+                    p_norm = np.linalg.norm(p_projected)
+                    incoming_proto = (p_projected / p_norm) if p_norm > 1e-8 else p_projected
 
                 # Context matching restricted to the active phase
                 phase_ctx_keys = [
@@ -560,6 +614,15 @@ def run_async_simulation(
                 
             # Dispatch a new task to the worker that just completed
             if time.time() < end_time:
+                elapsed = time.time() - start_time
+                current_phase = min(int(elapsed / phase_duration), num_phases - 1)
+                
+                if current_phase > current_global_phase:
+                    print(f"\n{'='*50}")
+                    print(f"[Server] SHIFTING PHASE: Transitioning to Phase {current_phase} at t={elapsed:.1f}s")
+                    print(f"{'='*50}\n")
+                    current_global_phase = current_phase
+
                 next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
                 unique_vehicles_trained.add(next_client)
                 
@@ -570,9 +633,10 @@ def run_async_simulation(
                 )
                 
                 with param_lock:
-                    assigned_context = context_assignments.get(next_client, 0)
+                    default_ctx = max(context_adapters.keys()) if context_adapters else 0
+                    assigned_context = context_assignments.get(next_client, default_ctx)
                     if use_lora:
-                        assigned_adapter = context_adapters.get(assigned_context, context_adapters[0])
+                        assigned_adapter = context_adapters.get(assigned_context, context_adapters[default_ctx])
                         combined = combine_arrays(
                             parameters_to_ndarrays(global_base_params),
                             parameters_to_ndarrays(assigned_adapter),
@@ -582,20 +646,12 @@ def run_async_simulation(
                     else:
                         params = global_base_params
 
-                elapsed = time.time() - start_time
-                current_phase = min(int(elapsed / phase_duration), num_phases - 1)
-                
-                if current_phase > current_global_phase:
-                    print(f"\n{'='*50}")
-                    print(f"[Server] SHIFTING PHASE: Transitioning to Phase {current_phase} at t={elapsed:.1f}s")
-                    print(f"{'='*50}\n")
-                    current_global_phase = current_phase
-
                 new_task = worker.fit.remote(next_client, client_refs[next_client], params, time.time(), current_phase)
                 active_tasks[new_task] = (worker, next_client)
 
         # ── Periodic evaluation ────────────────────────────────────────────────
         if time.time() - last_eval_time >= waiting_interval:
+            eval_start_ts = time.time()
             eval_counter += 1
             eval_params_dict: Dict[int, List[List[np.ndarray]]] = {}
             with param_lock:
@@ -621,6 +677,12 @@ def run_async_simulation(
 
             loss, metrics_dict = evaluate_global_model(global_model, eval_params_dict, global_test_loaders, device)
 
+            # Pause simulation clock during benchmark evaluation so slow 5-phase
+            # ResNet-18 test evaluation never eats into the training time of Phases 3 & 4.
+            eval_overhead = time.time() - eval_start_ts
+            start_time += eval_overhead
+            end_time   += eval_overhead
+
             phase_accuracies = [metrics_dict[f"phase_{i}_accuracy"] for i in range(num_phases)]
             seen_phases.add(current_global_phase)
             phase_max_accs[current_global_phase] = max(phase_max_accs[current_global_phase], phase_accuracies[current_global_phase])
@@ -639,7 +701,7 @@ def run_async_simulation(
 
             acc = metrics_dict.pop("accuracy")
             print(
-                f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter}: "
+                f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter} (eval took {eval_overhead:.1f}s): "
                 f"Loss: {loss:.4f}, Accuracy: {acc:.4f}, BWT: {bwt:.4f}, FWT: {fwt:.4f}"
             )
             print(f"  [Scheduler Health] {len(unique_vehicles_trained)} out of {num_clients} total vehicles have participated so far.\n")
@@ -695,3 +757,4 @@ def run_async_simulation(
         "total_updates":  update_count,
         "elapsed_time":   time.time() - start_time,
     }
+

@@ -1,7 +1,9 @@
 async:
   enabled: true
-  total_train_time: 900
   waiting_interval: 50
+  client_selection_strategy: round_robin
+  loss_temperature: 1.0
+  total_train_time: 900
 
 cl:
   enabled: true
@@ -9,10 +11,21 @@ cl:
 
 context:
   enabled: true
+  threshold: 0.15
+  target_proto_dim: 84
 
 lora:
   enabled: true
 
 dataset:
   workload: cifar100
-  split: iid
+  split: niid
+
+model:
+  name: resnet18
+
+
+client:
+  num_cpus: 2
+  num_gpus: 0.20
+
