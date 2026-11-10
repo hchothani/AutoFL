@@ -24,6 +24,7 @@ from flwr.common import (
     Status,
     ndarrays_to_parameters,
     parameters_to_ndarrays,
+)
 from flwr.server.client_proxy import ClientProxy
 
 from utils.compression_utils import compress_prototype
