@@ -223,6 +223,8 @@ def run_async_simulation(
     num_clients = len(train_loaders)
 
     print(f"\nCreating {num_clients} simulated clients...")
+    raw_comp = cfg.get("context", {}).get("compression", {})
+    comp_dict = OmegaConf.to_container(raw_comp, resolve=True) if OmegaConf.is_config(raw_comp) else dict(raw_comp) if raw_comp else {}
     clients = create_simulated_clients(
         num_clients=num_clients,
         model_fn=model_fn,
@@ -234,6 +236,7 @@ def run_async_simulation(
         simulate_delay=async_cfg["simulate_delay"],
         min_delay=async_cfg["min_delay"],
         max_delay=async_cfg["max_delay"],
+        compression_cfg=comp_dict,
     )
 
     # ── Model & weight-index initialisation ───────────────────────────────────

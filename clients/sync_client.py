@@ -109,13 +109,13 @@ class SyncSimulatedClient(fl.client.NumPyClient):
         # Calculate perfect centroid with external prototype compression
         if feature_count > 0:
             raw_proto = feature_sum / feature_count
-            compression_cfg = self.cfg.get("context", {}).get("compression", {})
-            if compression_cfg.get("enabled", True):
+            comp_cfg = self.cfg.get("context", {}).get("compression", {}) if hasattr(self.cfg, "get") else {}
+            if hasattr(comp_cfg, "get") and comp_cfg.get("enabled", True):
                 compressed_proto = compress_prototype(
                     raw_proto,
-                    target_dim=compression_cfg.get("target_dim", 84),
-                    centering=compression_cfg.get("centering", True),
-                    seed=compression_cfg.get("seed", 42)
+                    target_dim=comp_cfg.get("target_dim", 84),
+                    centering=comp_cfg.get("centering", True),
+                    seed=comp_cfg.get("seed", 42)
                 )
                 client_prototype = compressed_proto.tolist()
             else:

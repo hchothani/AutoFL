@@ -41,6 +41,7 @@ class SimulatedClientConfig:
     simulate_delay: bool = True
     min_delay: float = 0.5
     max_delay: float = 3.0
+    compression_cfg: Optional[Dict[str, Any]] = None
 
 class SimulatedAsyncClient(ClientProxy):
     def __init__(self, config: SimulatedClientConfig):
@@ -156,13 +157,13 @@ class SimulatedAsyncClient(ClientProxy):
         # Calculate perfect centroid with external prototype compression
         if feature_count > 0:
             raw_proto = feature_sum / feature_count
-            compression_cfg = self.config.get("context", {}).get("compression", {})
-            if compression_cfg.get("enabled", True):
+            comp_cfg = getattr(self.config, "compression_cfg", None) or {}
+            if hasattr(comp_cfg, "get") and comp_cfg.get("enabled", True):
                 compressed_proto = compress_prototype(
                     raw_proto,
-                    target_dim=compression_cfg.get("target_dim", 84),
-                    centering=compression_cfg.get("centering", True),
-                    seed=compression_cfg.get("seed", 42)
+                    target_dim=comp_cfg.get("target_dim", 84),
+                    centering=comp_cfg.get("centering", True),
+                    seed=comp_cfg.get("seed", 42)
                 )
                 client_prototype = compressed_proto.tolist()
             else:
@@ -254,6 +255,7 @@ def create_simulated_clients(
     simulate_delay: bool = True,
     min_delay: float = 0.5,
     max_delay: float = 3.0,
+    compression_cfg: Optional[Dict[str, Any]] = None,
 ) -> List[SimulatedAsyncClient]:
     clients = []
     for i in range(num_clients):
@@ -268,6 +270,7 @@ def create_simulated_clients(
             simulate_delay=simulate_delay,
             min_delay=min_delay,
             max_delay=max_delay,
+            compression_cfg=compression_cfg,
         )
         clients.append(SimulatedAsyncClient(config))
     return clients
