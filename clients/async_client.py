@@ -27,7 +27,7 @@ from flwr.common import (
 )
 from flwr.server.client_proxy import ClientProxy
 
-from utils.compression_utils import compress_prototype
+from utils.compression_utils import compress_prototype, find_classifier_module
 
 @dataclass
 class SimulatedClientConfig:
@@ -133,13 +133,9 @@ class SimulatedAsyncClient(ClientProxy):
                 feature_sum += np.sum(batch_features, axis=0)
             feature_count += batch_features.shape[0]
 
-        # Attach Hook
-        last_linear_layer = None
-        for module in self.model.modules():
-            if isinstance(module, torch.nn.Linear): last_linear_layer = module
-        if last_linear_layer is None: last_linear_layer = list(self.model.children())[-1]
-            
-        hook_handle = last_linear_layer.register_forward_hook(feature_hook)
+        # Attach Hook to outermost classifier (guarantees receiving full backbone feature vector)
+        classifier_layer = find_classifier_module(self.model)
+        hook_handle = classifier_layer.register_forward_hook(feature_hook)
 
         # Single Rapid Forward Pass without gradients
         try:

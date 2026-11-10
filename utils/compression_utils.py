@@ -17,8 +17,10 @@ Features:
 ========================================================================================
 """
 
-from typing import List, Union, Dict, Tuple
+from typing import List, Union, Dict, Tuple, Optional
 import numpy as np
+import torch
+import torch.nn as nn
 
 # Cache for projection matrices: (d_in, d_out, seed) -> np.ndarray
 _PROJECTION_CACHE: Dict[Tuple[int, int, int], np.ndarray] = {}
@@ -91,3 +93,40 @@ def compress_prototype(
         p = p / norm
 
     return p
+
+
+def find_classifier_module(model: nn.Module) -> nn.Module:
+    """
+    Finds the outermost classification layer of a neural network (or PEFT wrapped model)
+    whose input[0] receives the raw feature vector from the convolutional/feature backbone.
+
+    Guarantees:
+      - ResNet-18: Hooks self.fc (input shape: [batch, 512])
+      - SimpleCNN: Hooks self.fc3 (input shape: [batch, 84])
+      - MobileNet: Hooks self.backbone.classifier (input shape: [batch, 1280])
+      - Prevents internal PEFT LoRA submodules (such as lora_B) from hijacking the hook.
+    """
+    underlying = model
+    if hasattr(model, "base_model") and hasattr(model.base_model, "model"):
+        underlying = model.base_model.model
+    elif hasattr(model, "base_model"):
+        underlying = model.base_model
+
+    # Check common classifier attribute names
+    if hasattr(underlying, "fc"):
+        return getattr(underlying, "fc")
+    if hasattr(underlying, "fc3"):
+        return getattr(underlying, "fc3")
+    if hasattr(underlying, "backbone") and hasattr(underlying.backbone, "classifier"):
+        return getattr(underlying.backbone, "classifier")
+    if hasattr(underlying, "classifier"):
+        return getattr(underlying, "classifier")
+    if hasattr(underlying, "head"):
+        return getattr(underlying, "head")
+
+    # Fallback: scan top-level children of underlying in reverse order
+    children = list(underlying.children())
+    if children:
+        return children[-1]
+
+    return underlying

@@ -22,9 +22,13 @@ import torch.nn as nn
 from utils.compression_utils import (
     get_orthogonal_projection_matrix,
     compress_prototype,
+    find_classifier_module,
 )
 from models.resnet import resnet18
+from models.simple_cnn import SimpleCNN
 from models.mobilenet import MobileNet
+from utils.peft_utils import wrap_with_lora
+from omegaconf import OmegaConf
 
 
 def test_projection_matrix_orthogonality():
@@ -132,6 +136,43 @@ def test_standard_model_architectures():
     print("✓ Model architectures successfully verified.")
 
 
+def test_peft_hook_dimension_integrity():
+    print("\n--- Test 5: PEFT LoRA Hook Dimension Integrity ---")
+    cfg = OmegaConf.create({
+        "lora": {"enabled": True, "r": 8, "alpha": 16, "dropout": 0.05}
+    })
+
+    test_models = [
+        ("ResNet-18", resnet18(num_classes=10), 512),
+        ("SimpleCNN", SimpleCNN(num_classes=10), 84),
+        ("MobileNetV2", MobileNet(num_classes=10), 1280),
+    ]
+
+    for model_name, raw_model, expected_dim in test_models:
+        peft_model = wrap_with_lora(raw_model, cfg)
+        target_layer = find_classifier_module(peft_model)
+
+        hooked_dim = []
+        def make_hook(acc):
+            def hook(mod, inp, out):
+                acc.append(inp[0].shape[-1])
+            return hook
+
+        handle = target_layer.register_forward_hook(make_hook(hooked_dim))
+        dummy = torch.randn(2, 3, 32, 32)
+        _ = peft_model(dummy)
+        handle.remove()
+
+        actual_dim = hooked_dim[0]
+        print(f"  {model_name}: Hooked {type(target_layer).__name__} -> Feature Dim: {actual_dim} (Expected: {expected_dim})")
+        assert actual_dim == expected_dim, (
+            f"PEFT hook hijacked! Expected {expected_dim}-D backbone feature, got {actual_dim}-D!"
+        )
+        assert actual_dim != 8, f"Critical Bug: {model_name} hooked LoRA internal 8-D bottleneck!"
+
+    print("✓ PEFT hook dimension integrity verified: zero hijacking detected.")
+
+
 if __name__ == "__main__":
     print("===================================================================")
     print(" Running External Prototype-Level Compression Verification Suite  ")
@@ -140,6 +181,7 @@ if __name__ == "__main__":
     test_compress_prototype_shape_and_norm()
     test_anisotropic_cone_debiasing()
     test_standard_model_architectures()
+    test_peft_hook_dimension_integrity()
     print("\n===================================================================")
     print(" ALL TESTS PASSED SUCCESSFULLY! ")
     print("===================================================================")
