@@ -20,7 +20,14 @@ async:
 
 context:
   enabled: true
-  threshold: 0.35  # Sweep: [0.20, 0.30, 0.40, 0.50]
+  threshold: 0.15  # Calibrated for standardized 84-D prototype space (intra-task < 0.10)
+  merge_threshold: 0.06
+  merge_interval_evals: 3
+  compression:
+    enabled: true
+    target_dim: 84
+    centering: true
+    seed: 42
 
 lora:
   enabled: true

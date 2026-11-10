@@ -90,6 +90,11 @@ class SimulatedAsyncClient(ClientProxy):
         self.model.load_state_dict(state_dict)
 
         self.model.train()
+        # Freeze normalization layers during local training so small non-IID batches
+        # do not corrupt running statistics or cause cross-phase drift.
+        for m in self.model.modules():
+            if isinstance(m, (torch.nn.modules.batchnorm._BatchNorm, torch.nn.modules.instancenorm._InstanceNorm)):
+                m.eval()
         optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
         criterion = torch.nn.CrossEntropyLoss()
 
@@ -124,8 +129,10 @@ class SimulatedAsyncClient(ClientProxy):
 
         def feature_hook(module, input, output):
             nonlocal feature_sum, feature_count
-            # input[0] shape: (batch_size, feature_dim)
+            # input[0] shape: (batch_size, feature_dim) or (batch_size, C, 1, 1)
             batch_features = input[0].detach().cpu().numpy()
+            if batch_features.ndim > 2:
+                batch_features = batch_features.reshape(batch_features.shape[0], -1)
 
             if feature_sum is None:
                 feature_sum = np.sum(batch_features, axis=0)

@@ -23,6 +23,8 @@ from utils.compression_utils import (
     get_orthogonal_projection_matrix,
     compress_prototype,
     find_classifier_module,
+    partition_model_indices,
+    svd_merge_lora_weights,
 )
 from models.resnet import resnet18
 from models.simple_cnn import SimpleCNN
@@ -173,6 +175,59 @@ def test_peft_hook_dimension_integrity():
     print("✓ PEFT hook dimension integrity verified: zero hijacking detected.")
 
 
+def test_partition_model_indices():
+    print("\n--- Test 6: Model-Agnostic Parameter Partitioning ---")
+    cfg = OmegaConf.create({
+        "lora": {"enabled": True, "r": 8, "alpha": 16, "dropout": 0.05}
+    })
+
+    models_to_test = [
+        ("ResNet-18", resnet18(num_classes=10)),
+        ("SimpleCNN", SimpleCNN(num_classes=10)),
+        ("MobileNetV2", MobileNet(num_classes=10)),
+    ]
+
+    for model_name, raw_model in models_to_test:
+        peft_model = wrap_with_lora(raw_model, cfg)
+        base_idx, lora_idx = partition_model_indices(peft_model)
+        total_keys = len(peft_model.state_dict())
+
+        # Check disjoint and covering
+        assert len(base_idx) + len(lora_idx) == total_keys, f"Mismatch: {len(base_idx)} + {len(lora_idx)} != {total_keys}"
+        assert set(base_idx).isdisjoint(set(lora_idx)), "Base and LoRA indices must be mutually disjoint!"
+        print(f"  {model_name}: Total {total_keys} keys -> {len(base_idx)} Base, {len(lora_idx)} Adapter/BN")
+
+    print("✓ Model-agnostic parameter partitioning verified.")
+
+
+def test_svd_merge_lora_weights():
+    print("\n--- Test 7: Truncated SVD LoRA Merging ---")
+    # Simulate rank-4 LoRA pair: A in R^(4 x 16), B in R^(32 x 4)
+    r, d_in, d_out = 4, 16, 32
+    rng = np.random.RandomState(42)
+
+    A_a = rng.randn(r, d_in).astype(np.float32)
+    B_a = rng.randn(d_out, r).astype(np.float32)
+    bias_a = rng.randn(d_out).astype(np.float32)
+
+    A_b = rng.randn(r, d_in).astype(np.float32)
+    B_b = rng.randn(d_out, r).astype(np.float32)
+    bias_b = rng.randn(d_out).astype(np.float32)
+
+    merged = svd_merge_lora_weights([A_a, B_a, bias_a], [A_b, B_b, bias_b], 100.0, 100.0)
+    assert len(merged) == 3, f"Expected 3 tensors, got {len(merged)}"
+    assert merged[0].shape == (r, d_in), f"Expected A shape {(r, d_in)}, got {merged[0].shape}"
+    assert merged[1].shape == (d_out, r), f"Expected B shape {(d_out, r)}, got {merged[1].shape}"
+    assert merged[2].shape == (d_out,), f"Expected bias shape {(d_out,)}, got {merged[2].shape}"
+
+    # Also test reversed (B, A) ordering
+    merged_rev = svd_merge_lora_weights([B_a, A_a], [B_b, A_b], 50.0, 50.0)
+    assert len(merged_rev) == 2
+    assert merged_rev[0].shape == (d_out, r)
+    assert merged_rev[1].shape == (r, d_in)
+    print("✓ Truncated SVD LoRA merging verified.")
+
+
 if __name__ == "__main__":
     print("===================================================================")
     print(" Running External Prototype-Level Compression Verification Suite  ")
@@ -182,6 +237,8 @@ if __name__ == "__main__":
     test_anisotropic_cone_debiasing()
     test_standard_model_architectures()
     test_peft_hook_dimension_integrity()
+    test_partition_model_indices()
+    test_svd_merge_lora_weights()
     print("\n===================================================================")
     print(" ALL TESTS PASSED SUCCESSFULLY! ")
     print("===================================================================")

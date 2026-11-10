@@ -46,6 +46,9 @@ class SyncSimulatedClient(fl.client.NumPyClient):
             
         self.set_parameters(parameters)
         self.model.train()
+        for m in self.model.modules():
+            if isinstance(m, (nn.modules.batchnorm._BatchNorm, nn.modules.instancenorm._InstanceNorm)):
+                m.eval()
         
         optimizer = optim.SGD(self.model.parameters(), lr=self.cfg.client.learning_rate)
         criterion = nn.CrossEntropyLoss()
@@ -78,6 +81,8 @@ class SyncSimulatedClient(fl.client.NumPyClient):
             nonlocal feature_sum, feature_count
             # input[0] shape: (batch_size, feature_dim)
             batch_features = input[0].detach().cpu().numpy()
+            if batch_features.ndim > 2:
+                batch_features = batch_features.reshape(batch_features.shape[0], -1)
             
             if feature_sum is None:
                 feature_sum = np.sum(batch_features, axis=0)
