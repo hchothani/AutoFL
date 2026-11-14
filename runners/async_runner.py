@@ -32,7 +32,7 @@ import wandb
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
 from clients.async_client import create_simulated_clients
-from utils.compression_utils import partition_model_indices, svd_merge_lora_weights
+from utils.compression_utils import partition_model_indices
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -228,94 +228,6 @@ def evaluate_global_model(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Autonomous Context Merging (Phase-Agnostic with SVD LoRA Denoising)
-# ──────────────────────────────────────────────────────────────────────────────
-
-def merge_similar_contexts(
-    server_context_prototypes: Dict[int, np.ndarray],
-    context_adapters: Dict[int, Any],
-    context_strategies: Dict[int, AsynchronousStrategy],
-    context_assignments: Dict[int, int],
-    phase_to_context: Dict[int, set],
-    threshold: float,
-    updated_contexts: set,
-    context_sample_counts: Dict[int, int],
-):
-    """
-    Scans active contexts and merges any pair with cosine distance < threshold.
-    Operates 100% unsupervised and phase-agnostically:
-      - Weighted prototype fusion + unit-norm re-projection.
-      - Truncated SVD LoRA merging (ΔW = B @ A) to eliminate cross-term noise.
-      - Reroutes vehicle assignments and updates phase trackers without ground-truth cheating.
-    """
-    if not updated_contexts:
-        return
-
-    active_ids = list(server_context_prototypes.keys())
-    merged_this_round = set()
-
-    for id_a in list(updated_contexts):
-        if id_a in merged_this_round or id_a not in server_context_prototypes:
-            continue
-
-        for id_b in active_ids:
-            if id_a == id_b:
-                continue
-            if id_b in merged_this_round or id_b not in server_context_prototypes:
-                continue
-
-            dist = calculate_cosine_distance(
-                server_context_prototypes[id_a],
-                server_context_prototypes[id_b],
-            )
-
-            if dist < threshold:
-                n_a = float(context_sample_counts.get(id_a, 1))
-                n_b = float(context_sample_counts.get(id_b, 1))
-                total_n = max(n_a + n_b, 1.0)
-                print(
-                    f"  [Context Bank] COLLAPSE: Merging Context {id_b} into Context {id_a} "
-                    f"(Cos Dist: {dist:.3f}, samples: {int(n_a)} vs {int(n_b)})"
-                )
-
-                # 1. Weighted Prototype Averaging with L2 Unit-Norm Projection
-                p_fused = (server_context_prototypes[id_a] * n_a + server_context_prototypes[id_b] * n_b) / total_n
-                p_norm = np.linalg.norm(p_fused)
-                server_context_prototypes[id_a] = p_fused / p_norm if p_norm > 0 else p_fused
-
-                # 2. Truncated SVD LoRA Weight Merging (Eliminates Cross-Term Noise)
-                w_a = parameters_to_ndarrays(context_adapters[id_a])
-                w_b = parameters_to_ndarrays(context_adapters[id_b])
-                w_merged = svd_merge_lora_weights(w_a, w_b, n_a, n_b)
-                context_adapters[id_a] = ndarrays_to_parameters(w_merged)
-
-                # 3. Accumulate Cumulative Sample Counts
-                context_sample_counts[id_a] = int(n_a + n_b)
-                if id_b in context_sample_counts:
-                    del context_sample_counts[id_b]
-
-                # 4. Reroute Client Assignments
-                for c_idx, ctx_id in list(context_assignments.items()):
-                    if ctx_id == id_b:
-                        context_assignments[c_idx] = id_a
-
-                # 5. Update Phase Trackers
-                for p_idx in phase_to_context:
-                    if id_b in phase_to_context[p_idx]:
-                        phase_to_context[p_idx].remove(id_b)
-                        phase_to_context[p_idx].add(id_a)
-
-                # 6. Delete Redundant Context
-                del server_context_prototypes[id_b]
-                del context_adapters[id_b]
-                if id_b in context_strategies:
-                    del context_strategies[id_b]
-
-                merged_this_round.add(id_b)
-
-    updated_contexts.clear()
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Main simulation entrypoint
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -405,10 +317,6 @@ def run_async_simulation(
     server_context_prototypes: Dict[int, np.ndarray] = {}
     next_context_id = 0
     context_distance_threshold = cfg.get("context", {}).get("threshold", 0.15)
-    merge_threshold = cfg.get("context", {}).get("merge_threshold", 0.08)
-    merge_interval_evals = cfg.get("context", {}).get("merge_interval_evals", 3)
-    context_sample_counts: Dict[int, int] = {}
-    updated_contexts: set = set()
     context_assignments: Dict[int, int] = {}   
 
     # ### --- ENSEMBLE CHANGE: Upgrade to a SET to track all contexts seen in a phase --- ###
@@ -528,11 +436,6 @@ def run_async_simulation(
                     new_lora = parameters_to_ndarrays(context_adapters[assigned_context])
                     lora_shift = f"{calculate_weight_shift(old_lora, new_lora):.4f}"
 
-                context_sample_counts[assigned_context] = (
-                    context_sample_counts.get(assigned_context, 0) + fit_res.num_examples
-                )
-
-            updated_contexts.add(assigned_context)
             print(
                 f"  [Weight Shift] Vehicle {client_idx} | "
                 f"Base: {base_shift:.4f} | LoRA {assigned_context}: {lora_shift}"
@@ -628,18 +531,6 @@ def run_async_simulation(
             eval_counter += 1
             
             with param_lock:
-                if use_lora and updated_contexts and (eval_counter % merge_interval_evals == 0):
-                    merge_similar_contexts(
-                        server_context_prototypes=server_context_prototypes,
-                        context_adapters=context_adapters,
-                        context_strategies=context_strategies,
-                        context_assignments=context_assignments,
-                        phase_to_context=phase_to_context,
-                        threshold=merge_threshold,
-                        updated_contexts=updated_contexts,
-                        context_sample_counts=context_sample_counts,
-                    )
-
                 eval_params_dict: Dict[int, List[List[np.ndarray]]] = {}
                 if use_lora:
                     for p_idx in range(num_phases):

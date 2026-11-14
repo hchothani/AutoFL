@@ -21,8 +21,6 @@ async:
 context:
   enabled: true
   threshold: 0.15  # Calibrated for standardized 84-D prototype space (intra-task < 0.10)
-  merge_threshold: 0.06
-  merge_interval_evals: 3
   compression:
     enabled: true
     target_dim: 84
