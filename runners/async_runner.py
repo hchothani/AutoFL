@@ -20,7 +20,9 @@ collections.Sequence = collections.abc.Sequence  # Compatibility shim for older 
 
 import time
 import json
-from typing import Any, Dict, List, Optional
+import random
+import math
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -80,25 +82,23 @@ def calculate_weight_shift(
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Ray remote actor
+# Generic Ray Worker Actor (Stateless)
 # ──────────────────────────────────────────────────────────────────────────────
 
 @ray.remote
-class AsyncRayClientActor:
-    """Wraps a stateful Flower client as a Ray actor for non-blocking async training."""
-
-    def __init__(self, client_idx: int, client_obj):
-        self.client_idx = client_idx
-        self.client = client_obj
-
-    def fit(self, params, start_timestamp: float, current_phase: int):
+class AsyncWorkerActor:
+    """A generic, stateless Ray worker that dynamically executes whichever client is assigned to it."""
+    
+    def fit(self, client_idx: int, client_obj, params, start_timestamp: float, current_phase: int):
         from flwr.common import FitIns
+
         config = {
             "start_timestamp": start_timestamp,
             "current_phase": current_phase,
         }
-        fit_res = self.client.fit(FitIns(parameters=params, config=config))
-        return self.client_idx, fit_res, current_phase
+        # The worker executes the fit function on the provided client state
+        fit_res = client_obj.fit(FitIns(parameters=params, config=config))
+        return client_idx, fit_res, current_phase
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config helper
@@ -109,23 +109,53 @@ def get_async_config(cfg: DictConfig) -> Dict[str, Any]:
     if isinstance(async_cfg, DictConfig):
         async_cfg = OmegaConf.to_container(async_cfg, resolve=True)
     return {
-        "total_train_time":       async_cfg.get("total_train_time",       300),
-        "waiting_interval":       async_cfg.get("waiting_interval",        10),
-        "max_workers":            async_cfg.get("max_workers",              4),
-        "aggregation_strategy":   async_cfg.get("aggregation_strategy", "fedasync"),
-        "staleness_alpha":        async_cfg.get("staleness_alpha",        0.5),
-        "fedasync_mixing_alpha":  async_cfg.get("fedasync_mixing_alpha",  0.9),
-        "fedasync_a":             async_cfg.get("fedasync_a",             0.5),
-        "use_staleness":          async_cfg.get("use_staleness",          True),
-        "use_sample_weighing":    async_cfg.get("use_sample_weighing",    True),
-        "send_gradients":         async_cfg.get("send_gradients",         False),
-        "server_artificial_delay":async_cfg.get("server_artificial_delay",False),
-        "is_streaming":           async_cfg.get("is_streaming",           False),
-        "client_local_delay":     async_cfg.get("client_local_delay",     False),
-        "simulate_delay":         async_cfg.get("simulate_delay",         True),
-        "min_delay":              async_cfg.get("min_delay",              0.5),
+        "total_train_time":           async_cfg.get("total_train_time",       900),
+        "waiting_interval":           async_cfg.get("waiting_interval",        10),
+        "max_workers":                async_cfg.get("max_workers",              5),
+        "aggregation_strategy":       async_cfg.get("aggregation_strategy", "fedasync"),
+        "staleness_alpha":            async_cfg.get("staleness_alpha",        0.5),
+        "fedasync_mixing_alpha":      async_cfg.get("fedasync_mixing_alpha",  0.9),
+        "fedasync_a":                 async_cfg.get("fedasync_a",             0.5),
+        "use_staleness":              async_cfg.get("use_staleness",          True),
+        "use_sample_weighing":        async_cfg.get("use_sample_weighing",    True),
+        "send_gradients":             async_cfg.get("send_gradients",         False),
+        "server_artificial_delay":    async_cfg.get("server_artificial_delay",False),
+        "is_streaming":               async_cfg.get("is_streaming",           False),
+        "client_local_delay":         async_cfg.get("client_local_delay",     False),
+        "simulate_delay":             async_cfg.get("simulate_delay",         True),
+        "min_delay":                  async_cfg.get("min_delay",              0.5),
         "max_delay":              async_cfg.get("max_delay",              3.0),
+        "client_selection_strategy":  async_cfg.get("client_selection_strategy", "round_robin"),
+        "loss_temperature":           async_cfg.get("loss_temperature",       1.0),
     }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Client Scheduler
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_next_client(strategy: str, registry: dict, available_clients: list, temperature: float = 1.0) -> int:
+    """Selects the next client from the available pool based on the defined strategy."""
+    if not available_clients:
+        raise ValueError("No clients available to schedule.")
+
+    if strategy == "round_robin":
+        return available_clients.pop(0)
+    
+    elif strategy == "data_weighted":
+        weights = [registry[c]["data"] for c in available_clients]
+        selected = random.choices(available_clients, weights=weights, k=1)[0]
+        available_clients.remove(selected)
+        return selected
+        
+    elif strategy == "loss_weighted":
+        losses = [registry[c]["loss"] for c in available_clients]
+        max_loss = max(losses) if losses else 0
+        exp_weights = [math.exp((l - max_loss) / temperature) for l in losses]
+        selected = random.choices(available_clients, weights=exp_weights, k=1)[0]
+        available_clients.remove(selected)
+        return selected
+        
+    return available_clients.pop(0)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Global model evaluation (Fast evaluation with device pre-loading & logit norm)
@@ -297,6 +327,9 @@ def run_async_simulation(
     # ── Phase & timing setup ──────────────────────────────────────────────────
     total_train_time = async_cfg["total_train_time"]
     waiting_interval = async_cfg["waiting_interval"]
+    client_strategy  = async_cfg["client_selection_strategy"]
+    temperature      = async_cfg["loss_temperature"]
+    print(f"[Scheduler] Client selection strategy: {client_strategy}")
 
     cl_enabled  = cfg.get("cl", {}).get("enabled", False)
     num_phases  = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
@@ -444,23 +477,45 @@ def run_async_simulation(
         update_count += 1
         return t_diff
 
-    # ── Ray cluster setup ──────────────────────────────────────────────────────
+    # ── Ray Cluster & Worker Pool Setup ─────────────────────────────────────────
     if not ray.is_initialized():
         ray.init(ignore_reinit_error=True, include_dashboard=False)
 
-    print(f"\nDeploying {num_clients} stateful vehicle actors to the Ray cluster...")
-    ray_actors: Dict[int, Any] = {}
-    for i in range(num_clients):
-        actor = AsyncRayClientActor.options(
+    max_workers = async_cfg.get("max_workers")
+    if not max_workers:
+        total_cpus = ray.cluster_resources().get("CPU", 1.0)
+        cpus_per_client = cfg.client.num_cpus or 1.0
+        max_workers = max(1, int(total_cpus // cpus_per_client))
+        print(f"[Ray] Auto-detected hardware concurrency limit: {max_workers} active tasks")
+
+    print(f"\nLoading {num_clients} client datasets into Ray Shared Memory (Plasma)...")
+    client_refs = {i: ray.put(clients[i]) for i in range(num_clients)}
+
+    print(f"\nDeploying pool of {max_workers} generic Worker Actors to the Ray cluster...")
+    workers = [
+        AsyncWorkerActor.options(
             num_cpus=cfg.client.num_cpus,
             num_gpus=cfg.client.num_gpus,
-        ).remote(client_idx=i, client_obj=clients[i])
-        ray_actors[i] = actor
+        ).remote()
+        for _ in range(max_workers)
+    ]
 
-    active_tasks: Dict[Any, int] = {}
+    # ── Initial Dispatch ────────────────────────────────────────────────────────
+    client_registry = {i: {"data": 1.0, "loss": 1.0} for i in range(num_clients)}
+    available_clients = list(range(num_clients))
+    unique_vehicles_trained = set()
+
+    # Track the active tasks mapped to a Tuple of (WorkerActor, Client_Idx)
+    active_tasks: Dict[Any, Tuple[Any, int]] = {}
     eval_counter, last_eval_time = 0, start_time
 
-    for client_idx, actor in ray_actors.items():
+    for worker in workers:
+        if not available_clients:
+            break
+        client_idx = get_next_client(client_strategy, client_registry, available_clients, temperature)
+        unique_vehicles_trained.add(client_idx)
+        print(f"  [Scheduler] Init Dispatch -> Assigned Vehicle {client_idx} to a generic worker.")
+
         with param_lock:
             if use_lora:
                 default_ctx = max(context_adapters.keys()) if context_adapters else 0
@@ -472,48 +527,63 @@ def run_async_simulation(
                 params = ndarrays_to_parameters(combined)
             else:
                 params = global_base_params
-        task = actor.fit.remote(params, time.time(), current_phase=0)
-        active_tasks[task] = client_idx
+
+        # Send the client state to the worker pool
+        task = worker.fit.remote(client_idx, client_refs[client_idx], params, time.time(), current_phase=0)
+        active_tasks[task] = (worker, client_idx)
 
     # ── Main async event loop ──────────────────────────────────────────────────
     while time.time() < end_time and active_tasks:
         ready_tasks, _ = ray.wait(list(active_tasks.keys()), num_returns=1, timeout=0.1)
 
         for task in ready_tasks:
-            client_idx = active_tasks.pop(task)
+            # Pop the task to retrieve both the generic worker and the completed client ID
+            worker, returned_client_idx = active_tasks.pop(task)
+
             try:
-                returned_client_idx, fit_res, returned_phase = ray.get(task)
-                t_diff = aggregate_result(returned_client_idx, fit_res, returned_phase)
+                client_idx_from_tuple, fit_res, returned_phase = ray.get(task)
+                t_diff = aggregate_result(client_idx_from_tuple, fit_res, returned_phase)
+
+                client_registry[client_idx_from_tuple]["data"] = fit_res.num_examples
+                client_registry[client_idx_from_tuple]["loss"] = fit_res.metrics.get("loss", 1.0)
+                available_clients.append(client_idx_from_tuple)
+
                 print(
                     f"[Phase: {returned_phase}] [t={time.time() - start_time:.1f}s] "
-                    f"Vehicle {client_idx} completed "
-                    f"(loss: {fit_res.metrics.get('loss', 0):.4f})"
+                    f"Vehicle {client_idx_from_tuple} completed (loss: {fit_res.metrics.get('loss', 0):.4f})"
                 )
             except Exception as e:
-                print(f"[Error] Vehicle {client_idx} failed: {e}")
+                print(f"[Error] Vehicle {returned_client_idx} failed: {e}")
                 import traceback
                 traceback.print_exc()
+                available_clients.append(returned_client_idx)
                 continue
 
+            # Dispatch a new task specifically to the worker that just finished
             if time.time() < end_time:
+                next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
+                unique_vehicles_trained.add(next_client)
+
+                print(
+                    f"  [Scheduler] Handoff: Vehicle {returned_client_idx} finished -> "
+                    f"Dispatched Vehicle {next_client} to the freed worker. "
+                    f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
+                )
+
                 elapsed = time.time() - start_time
                 current_phase = min(int(elapsed / phase_duration), num_phases - 1)
+
                 if current_phase > current_global_phase:
                     print(f"\n{'='*50}")
-                    print(
-                        f"[Server] SHIFTING PHASE: Transitioning to Phase "
-                        f"{current_phase} at t={elapsed:.1f}s"
-                    )
+                    print(f"[Server] SHIFTING PHASE: Transitioning to Phase {current_phase} at t={elapsed:.1f}s")
                     print(f"{'='*50}\n")
                     current_global_phase = current_phase
 
                 with param_lock:
                     default_ctx = max(context_adapters.keys()) if context_adapters else 0
-                    assigned_context = context_assignments.get(client_idx, default_ctx)
+                    assigned_context = context_assignments.get(next_client, default_ctx)
                     if use_lora:
-                        assigned_adapter = context_adapters.get(
-                            assigned_context, context_adapters[default_ctx]
-                        )
+                        assigned_adapter = context_adapters.get(assigned_context, context_adapters[default_ctx])
                         combined = combine_arrays(
                             parameters_to_ndarrays(global_base_params),
                             parameters_to_ndarrays(assigned_adapter),
@@ -523,8 +593,8 @@ def run_async_simulation(
                     else:
                         params = global_base_params
 
-                new_task = ray_actors[client_idx].fit.remote(params, time.time(), current_phase)
-                active_tasks[new_task] = client_idx
+                new_task = worker.fit.remote(next_client, client_refs[next_client], params, time.time(), current_phase)
+                active_tasks[new_task] = (worker, next_client)
 
         # ── Periodic evaluation ────────────────────────────────────────────────
         if time.time() - last_eval_time >= waiting_interval:
@@ -617,8 +687,8 @@ def run_async_simulation(
             last_eval_time = time.time()
 
     # ── Teardown ───────────────────────────────────────────────────────────────
-    for actor in ray_actors.values():
-        ray.kill(actor)
+    for worker in workers:
+        ray.kill(worker)
     ray.shutdown()
 
     # ── Final evaluation ───────────────────────────────────────────────────────
