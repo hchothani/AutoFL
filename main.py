@@ -46,6 +46,13 @@ def load_cfg():
         else: print(f"[Config] File {candidate} not found. Using base config.")
     
     cfg = OmegaConf.merge(base_cfg, exp_cfg) if exp_cfg else base_cfg
+
+    # Merge any dotlist CLI overrides (e.g. async.total_train_time=60)
+    cli_args = [arg for arg in sys.argv[1:] if "=" in arg and not arg.startswith("--")]
+    if cli_args:
+        cli_cfg = OmegaConf.from_dotlist(cli_args)
+        cfg = OmegaConf.merge(cfg, cli_cfg)
+
     return cfg
 
 def prepare_run_directory(cfg, is_async: bool) -> Path:
@@ -112,6 +119,7 @@ def main():
     if wandb_enabled:
         run_name = generate_run_name(cfg, is_async)
         wandb.init(
+            entity=cfg.get("wb", {}).get("entity", None),
             project=cfg.get("wb", {}).get("project", "autofl-async"),
             name=run_name,
             group=cfg.get("wb", {}).get("group", None),

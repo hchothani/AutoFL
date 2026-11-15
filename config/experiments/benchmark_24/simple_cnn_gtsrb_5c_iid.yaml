@@ -1,0 +1,15 @@
+# Run 9/24: SIMPLE_CNN | GTSRB | 5 Clients | IID
+model:
+  name: simple_cnn
+
+dataset:
+  workload: gtsrb
+  split: iid
+
+server:
+  num_clients: 5
+  min_fit: 5
+  min_eval: 5
+
+wb:
+  group: benchmark_24

@@ -1,0 +1,14 @@
+# AutoFL 24-Run Benchmark Suite: Top Reference Config
+# All 24 experiments inherit from config/config.yaml and override the grid parameters:
+# Grid: [simple_cnn, resnet18] x [cifar10, cifar100, gtsrb] x [5, 10 clients] x [iid, niid]
+
+suite:
+  name: benchmark_24
+  total_runs: 24
+  models: [simple_cnn, resnet18]
+  datasets: [cifar10, cifar100, gtsrb]
+  clients: [5, 10]
+  splits: [iid, niid]
+
+wb:
+  group: benchmark_24

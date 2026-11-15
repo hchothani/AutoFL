@@ -1,0 +1,15 @@
+# Run 18/24: RESNET18 | CIFAR100 | 5 Clients | NIID
+model:
+  name: resnet18
+
+dataset:
+  workload: cifar100
+  split: niid
+
+server:
+  num_clients: 5
+  min_fit: 5
+  min_eval: 5
+
+wb:
+  group: benchmark_24

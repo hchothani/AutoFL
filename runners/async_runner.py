@@ -327,9 +327,17 @@ def run_async_simulation(
     # ── Phase & timing setup ──────────────────────────────────────────────────
     total_train_time = async_cfg["total_train_time"]
     waiting_interval = async_cfg["waiting_interval"]
-    client_strategy  = async_cfg["client_selection_strategy"]
-    temperature      = async_cfg["loss_temperature"]
-    print(f"[Scheduler] Client selection strategy: {client_strategy}")
+    raw_strategy     = async_cfg.get("client_selection_strategy", "round_robin")
+    if isinstance(raw_strategy, str):
+        client_strategy = raw_strategy.lower().strip()
+    elif raw_strategy is None or raw_strategy is False:
+        client_strategy = "none"
+    else:
+        client_strategy = str(raw_strategy).lower().strip()
+
+    is_scheduler_enabled = client_strategy not in ("none", "null", "false", "disabled", "")
+    temperature          = async_cfg["loss_temperature"]
+    print(f"[Scheduler] Client selection strategy: {client_strategy} (Dynamic scheduler enabled: {is_scheduler_enabled})")
 
     cl_enabled  = cfg.get("cl", {}).get("enabled", False)
     num_phases  = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
@@ -509,12 +517,15 @@ def run_async_simulation(
     active_tasks: Dict[Any, Tuple[Any, int]] = {}
     eval_counter, last_eval_time = 0, start_time
 
-    for worker in workers:
-        if not available_clients:
-            break
-        client_idx = get_next_client(client_strategy, client_registry, available_clients, temperature)
+    for worker_idx, worker in enumerate(workers):
+        if not is_scheduler_enabled:
+            client_idx = worker_idx % num_clients
+        else:
+            if not available_clients:
+                break
+            client_idx = get_next_client(client_strategy, client_registry, available_clients, temperature)
         unique_vehicles_trained.add(client_idx)
-        print(f"  [Scheduler] Init Dispatch -> Assigned Vehicle {client_idx} to a generic worker.")
+        print(f"  [Scheduler] Init Dispatch -> Assigned Vehicle {client_idx} to worker {worker_idx}.")
 
         with param_lock:
             if use_lora:
@@ -546,7 +557,8 @@ def run_async_simulation(
 
                 client_registry[client_idx_from_tuple]["data"] = fit_res.num_examples
                 client_registry[client_idx_from_tuple]["loss"] = fit_res.metrics.get("loss", 1.0)
-                available_clients.append(client_idx_from_tuple)
+                if is_scheduler_enabled:
+                    available_clients.append(client_idx_from_tuple)
 
                 print(
                     f"[Phase: {returned_phase}] [t={time.time() - start_time:.1f}s] "
@@ -556,19 +568,27 @@ def run_async_simulation(
                 print(f"[Error] Vehicle {returned_client_idx} failed: {e}")
                 import traceback
                 traceback.print_exc()
-                available_clients.append(returned_client_idx)
+                if is_scheduler_enabled:
+                    available_clients.append(returned_client_idx)
                 continue
 
             # Dispatch a new task specifically to the worker that just finished
             if time.time() < end_time:
-                next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
-                unique_vehicles_trained.add(next_client)
+                if not is_scheduler_enabled:
+                    next_client = returned_client_idx
+                    print(
+                        f"  [Scheduler] Direct Re-dispatch (Strategy: {client_strategy}): "
+                        f"Vehicle {next_client} re-dispatched immediately to the freed worker."
+                    )
+                else:
+                    next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
+                    unique_vehicles_trained.add(next_client)
 
-                print(
-                    f"  [Scheduler] Handoff: Vehicle {returned_client_idx} finished -> "
-                    f"Dispatched Vehicle {next_client} to the freed worker. "
-                    f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
-                )
+                    print(
+                        f"  [Scheduler] Handoff: Vehicle {returned_client_idx} finished -> "
+                        f"Dispatched Vehicle {next_client} to the freed worker. "
+                        f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
+                    )
 
                 elapsed = time.time() - start_time
                 current_phase = min(int(elapsed / phase_duration), num_phases - 1)
