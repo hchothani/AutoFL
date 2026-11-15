@@ -114,23 +114,7 @@ def main():
     if not ray.is_initialized():
         ray.init(**ray_init_args)
 
-    # 2. Initialize WandB
-    wandb_enabled = cfg.get("wb", {}).get("mode", "online") != "disabled"
-    if wandb_enabled:
-        run_name = generate_run_name(cfg, is_async)
-        wandb.init(
-            entity=cfg.get("wb", {}).get("entity", None),
-            project=cfg.get("wb", {}).get("project", "autofl-async"),
-            name=run_name,
-            group=cfg.get("wb", {}).get("group", None),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            mode=cfg.get("wb", {}).get("mode", "online"),
-        )
-        print(f"[WandB] Initialized: {wandb.run.name}")
-    else:
-        print("[WandB] Disabled")
-
-    # 3. Hardware & Models
+    # 2. Hardware & Models
     if cfg.client.num_gpus > 0.0 and torch.cuda.is_available():
         device = torch.device("cuda:0")
         print(f"Using GPU: {torch.cuda.get_device_name(0)}")
@@ -138,8 +122,7 @@ def main():
         device = torch.device("cpu")
         print("Using CPU")
 
-
-    # 4. Load Data
+    # 3. Load Data
     print(f"\n[System] Loading {cfg.dataset.workload} Dataset..")
     train_loaders, test_loaders, global_test_loaders, metadata = get_data_loaders(cfg, cfg.server.num_clients)
 
@@ -157,6 +140,22 @@ def main():
     # Dynamically resolve context threshold using Algorithm 1 + Theoretical Formula
     resolve_context_threshold(cfg, test_model, global_test_loaders, device)
     del test_model
+
+    # 4. Initialize WandB (after threshold resolution so run_name includes the resolved tau!)
+    wandb_enabled = cfg.get("wb", {}).get("mode", "online") != "disabled"
+    if wandb_enabled:
+        run_name = generate_run_name(cfg, is_async)
+        wandb.init(
+            entity=cfg.get("wb", {}).get("entity", None),
+            project=cfg.get("wb", {}).get("project", "autofl-async"),
+            name=run_name,
+            group=cfg.get("wb", {}).get("group", None),
+            config=OmegaConf.to_container(cfg, resolve=True),
+            mode=cfg.get("wb", {}).get("mode", "online"),
+        )
+        print(f"[WandB] Initialized: {wandb.run.name}")
+    else:
+        print("[WandB] Disabled")
 
     # 5. Route to Runner
 

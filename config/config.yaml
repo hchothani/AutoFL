@@ -30,7 +30,7 @@ model:
 
 context:
   enabled: true          # Set to true for Context-Aware Prototype Routing
-  threshold: 0.15
+  threshold: auto
   target_proto_dim: 84
   compression:
     enabled: true
@@ -88,6 +88,7 @@ wb:
     - "model.name"
     - "server.num_clients"
     - "dataset.split"
+    - "context.threshold"
     - "async.enabled"
     - "async.client_selection_strategy"
     - "context.enabled"

@@ -197,8 +197,8 @@ def resolve_context_threshold(
 
     is_auto_requested = (is_auto_string or is_auto_flag) and not has_cli_numeric_override
 
-    # STRICT CONDITION: ONLY simple_cnn AND ONLY when threshold='auto'
-    should_apply_formula = is_simple_cnn and is_auto_requested
+    # Resolves auto threshold across all models (SimpleCNN, ResNet18, MobileNet, etc.)
+    should_apply_formula = is_auto_requested
 
     if should_apply_formula:
         res = compute_direct_regression_threshold(
@@ -210,7 +210,7 @@ def resolve_context_threshold(
         tau_star = res["tau_star"]
 
         print("=" * 80)
-        print(f"[Threshold Auto-Config] >>> ACTIVE: Model is SimpleCNN and threshold='auto'.")
+        print(f"[Threshold Auto-Config] >>> ACTIVE: Model is {model_name} and threshold='auto'.")
         print(f"[Threshold Auto-Config] Workload: {workload.upper()} | Classes (C): {num_classes} | Phases (P): {num_phases} | K: {res['K']:.1f}")
         print(f"[Threshold Auto-Config] Channels (C_in): {in_channels} | d_inter: {res['d_inter']:.4f} | d_intra: {res['d_intra']:.4f} | Margin: {res['margin']:.4f}")
         print(f"[Threshold Auto-Config] Universal Statistical Regression Law predicted threshold: tau* = {tau_star:.2f}")
@@ -220,23 +220,12 @@ def resolve_context_threshold(
         cfg.context.threshold = tau_star
         return tau_star
 
-    # Formula is strictly bypassed in all other situations:
-    if not is_simple_cnn:
-        if is_auto_string:
-            print(f"[Threshold] Notice: Theoretical formula is strictly restricted to SimpleCNN. For '{model_name}', defaulting threshold to 0.35.")
-            final_tau = 0.35
-        else:
-            try:
-                final_tau = float(raw_threshold)
-            except (ValueError, TypeError):
-                final_tau = 0.35
-        print(f"[Threshold] Model is '{model_name}' (not SimpleCNN). Theoretical formula bypassed. context.threshold = {final_tau:.2f}")
-    else:
-        try:
-            final_tau = float(raw_threshold)
-        except (ValueError, TypeError):
-            final_tau = 0.35
-        print(f"[Threshold] Model is SimpleCNN, but threshold is explicitly set to {final_tau:.2f} (not 'auto'). Theoretical formula bypassed.")
+    # Explicit numerical threshold used when threshold is not 'auto':
+    try:
+        final_tau = float(raw_threshold)
+    except (ValueError, TypeError):
+        final_tau = 0.35
 
+    print(f"[Threshold] Explicit numeric threshold used for '{model_name}': context.threshold = {final_tau:.2f}")
     cfg.context.threshold = final_tau
     return final_tau
