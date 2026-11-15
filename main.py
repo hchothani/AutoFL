@@ -2,6 +2,9 @@ import ray
 import sys
 import os
 
+# Prevent PyTorch virtual memory fragmentation in long multi-phase FL runs
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 # Comment below if you want Ray Warnings and Logs
 os.environ["RAY_BACKEND_LOG_LEVEL"] = "fatal"
 

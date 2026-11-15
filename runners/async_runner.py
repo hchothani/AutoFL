@@ -250,6 +250,8 @@ def evaluate_global_model(
 
     finally:
         model.load_state_dict(original_state)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     total_loss = total_phases_loss / max(len(test_loaders), 1)
     total_accuracy = total_correct / max(total_total, 1)
@@ -647,6 +649,9 @@ def run_async_simulation(
             loss, metrics_dict = evaluate_global_model(
                 global_model, eval_params_dict, global_test_loaders, device
             )
+            del eval_params_dict
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             eval_overhead = time.time() - eval_start_ts
             start_time += eval_overhead
             end_time += eval_overhead

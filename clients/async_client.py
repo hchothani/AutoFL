@@ -121,6 +121,12 @@ class SimulatedAsyncClient(ClientProxy):
 
         avg_loss = total_loss / max(num_batches, 1)
 
+        # Free local optimizer and gradients to prevent VRAM accumulation across async dispatches
+        self.model.zero_grad(set_to_none=True)
+        del optimizer
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # Prototype Extraction (Post-Training)
         self.model.eval()
 
@@ -179,6 +185,10 @@ class SimulatedAsyncClient(ClientProxy):
             time.sleep(upload_delay)
 
         new_params = [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+        self.model.zero_grad(set_to_none=True)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         elapsed = time.time() - start_time
 
         metrics={
