@@ -1,18 +1,22 @@
-async:
-  enabled: true
-  total_train_time: 900
-  waiting_interval: 50
-
-cl:
-  enabled: true
-  num_experiences: 10
-
-context:
-  enabled: true
-
-lora:
-  enabled: true
+# Run 15/24: RESNET18 | CIFAR10 | 10 Clients | IID
+model:
+  name: resnet18
 
 dataset:
-  workload: cifar100
+  workload: cifar10
   split: iid
+
+server:
+  num_clients: 10
+  min_fit: 10
+  min_eval: 10
+
+wb:
+  group: benchmark_24
+
+client:
+  num_gpus: 0.33
+
+async:
+  max_workers: 3
+  total_train_time: 1200
