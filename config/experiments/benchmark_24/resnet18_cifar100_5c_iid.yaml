@@ -13,11 +13,3 @@ server:
 
 wb:
   group: benchmark_24
-
-client:
-  batch_size: 16
-  num_gpus: 0.33
-
-async:
-  max_workers: 3
-  total_train_time: 1200

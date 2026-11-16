@@ -82,17 +82,17 @@ if torch.cuda.is_available():
 
 ## 3. Configuration Standards for the 24 Benchmark Runs
 
-To maintain scientific consistency and hardware stability across all runs:
+All 24 benchmark runs across both `simple_cnn` and `resnet18` are now standardized to identical high-throughput settings:
 
-| Parameter | `simple_cnn` (12 Runs) | `resnet18` (12 Runs) | Rationale |
-| :--- | :---: | :---: | :--- |
-| **`client.batch_size`** | `32` | `16` | Keeps ResNet-18 activation graphs compact |
-| **`async.max_workers`** | `5` | `3` | Prevents concurrent VRAM saturation on 12 GB GPUs |
-| **`client.num_gpus`** | `0.20` | `0.33` | 5 workers = 1.0 GPU; 3 workers = 1.0 GPU |
-| **`async.total_train_time`** | `900` s | `1200` s | Compensates for lower worker count to match total updates |
-| **`context.threshold`** | `auto` | `auto` | Universal regression law ($x_1, x_2, x_3, x_4 \to \tau^*$) |
-| **`context.compression.enabled`** | `true` | `true` | 84-D orthogonal prototype projection |
-| **`cl.num_experiences`** | `5` | `5` | 5-phase Continual Learning |
+| Parameter | Value (All 24 Runs) | Rationale |
+| :--- | :---: | :--- |
+| **`client.batch_size`** | `32` | Original baseline batch optimization dynamics |
+| **`async.max_workers`** | `5` | High concurrency pool across Ray workers |
+| **`client.num_gpus`** | `0.20` | 5 concurrent workers = 1.0 GPU |
+| **`async.total_train_time`** | `900` s | Standard 15-minute budget (180s per phase) |
+| **`context.threshold`** | `auto` | Universal regression law ($x_1, x_2, x_3, x_4 \to \tau^*$) |
+| **`context.compression.enabled`** | `true` | 84-D orthogonal prototype projection |
+| **`cl.num_experiences`** | `5` | 5-phase Continual Learning |
 
 ---
 
@@ -121,3 +121,4 @@ To maintain scientific consistency and hardware stability across all runs:
      ```bash
      python main.py --config-path config/experiments/benchmark_24 --config-name resnet18_cifar100_10c_iid
      ```
+
