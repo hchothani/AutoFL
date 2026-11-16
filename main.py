@@ -41,7 +41,8 @@ def load_cfg():
     if "--config-path" in sys.argv and "--config-name" in sys.argv:
         cfg_path = sys.argv[sys.argv.index("--config-path") + 1]
         cfg_name = sys.argv[sys.argv.index("--config-name") + 1]
-        candidate = os.path.join(cfg_path, f"{cfg_name}.yaml")
+        clean_cfg_name = cfg_name[:-5] if cfg_name.endswith(".yaml") else cfg_name
+        candidate = os.path.join(cfg_path, f"{clean_cfg_name}.yaml")
         if os.path.isfile(candidate):
             exp_cfg = OmegaConf.load(candidate)
             if "defaults" in exp_cfg:
