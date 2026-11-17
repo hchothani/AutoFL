@@ -31,10 +31,19 @@ import ray
 from omegaconf import DictConfig, OmegaConf
 import wandb
 
-from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
+from flwr.common import (
+    Code,
+    FitRes,
+    Status,
+    ndarrays_to_parameters,
+    parameters_to_ndarrays,
+)
 from algorithms.async_fl import AsynchronousStrategy, AsyncHistory
-from clients.async_client import create_simulated_clients
-from utils.compression_utils import partition_model_indices
+from utils.compression_utils import (
+    compress_prototype,
+    find_classifier_module,
+    partition_model_indices,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -82,22 +91,183 @@ def calculate_weight_shift(
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Generic Ray Worker Actor (Stateless)
+# Persistent Ray Worker Actor (Zero-Deserialization-Leak Execution Engine)
 # ──────────────────────────────────────────────────────────────────────────────
 
 @ray.remote
 class AsyncWorkerActor:
-    """A generic, stateless Ray worker that dynamically executes whichever client is assigned to it."""
-    
-    def fit(self, client_idx: int, client_obj, params, start_timestamp: float, current_phase: int):
-        from flwr.common import FitIns
+    """
+    A persistent Ray worker actor that maintains its own GPU model instance.
+    Trains assigned clients on demand without deserializing models or clients across Ray IPC.
+    """
 
-        config = {
+    def __init__(
+        self,
+        model_fn: Any,
+        train_loaders_ref: Any,
+        local_epochs: int = 3,
+        learning_rate: float = 0.01,
+        simulate_delay: bool = False,
+        min_delay: float = 0.5,
+        max_delay: float = 3.0,
+        compression_cfg: Optional[Dict[str, Any]] = None,
+        device_str: str = "cuda:0",
+    ):
+        self.device = torch.device(device_str if torch.cuda.is_available() else "cpu")
+        self.model = model_fn().to(self.device)
+        self.train_loaders = (
+            ray.get(train_loaders_ref)
+            if isinstance(train_loaders_ref, ray.ObjectRef)
+            else train_loaders_ref
+        )
+        self.local_epochs = local_epochs
+        self.learning_rate = learning_rate
+        self.simulate_delay = simulate_delay
+        self.min_delay = min_delay
+        self.max_delay = max_delay
+        self.compression_cfg = compression_cfg or {}
+
+    def fit(
+        self,
+        client_idx: int,
+        params: Any,
+        start_timestamp: float,
+        current_phase: int,
+    ) -> Tuple[int, FitRes, int]:
+        start_time = time.time()
+        active_train_loader = self.train_loaders[client_idx][current_phase]
+        num_examples = len(active_train_loader.dataset)
+
+        if self.simulate_delay:
+            download_delay = random.uniform(self.min_delay / 2, self.max_delay / 2)
+            time.sleep(download_delay)
+
+        # Load incoming weights into the resident model
+        params_nd = parameters_to_ndarrays(params)
+        state_dict = self.model.state_dict()
+        for key, p in zip(state_dict.keys(), params_nd):
+            state_dict[key] = torch.tensor(p)
+        self.model.load_state_dict(state_dict)
+
+        self.model.train()
+        # Freeze normalization layers during local training so small non-IID batches
+        # do not corrupt running statistics or cause cross-phase drift.
+        for m in self.model.modules():
+            if isinstance(
+                m,
+                (
+                    torch.nn.modules.batchnorm._BatchNorm,
+                    torch.nn.modules.instancenorm._InstanceNorm,
+                ),
+            ):
+                m.eval()
+
+        optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
+        criterion = torch.nn.CrossEntropyLoss()
+
+        total_loss = 0.0
+        num_batches = 0
+        for epoch in range(self.local_epochs):
+            for batch in active_train_loader:
+                if isinstance(batch, dict):
+                    images = batch.get("img", batch.get("x")).to(self.device)
+                    labels = batch.get("label", batch.get("y")).to(self.device)
+                elif isinstance(batch, (tuple, list)):
+                    images, labels = batch[0].to(self.device), batch[1].to(self.device)
+                else:
+                    continue
+
+                optimizer.zero_grad()
+                outputs = self.model(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+
+                total_loss += loss.item()
+                num_batches += 1
+
+        avg_loss = total_loss / max(num_batches, 1)
+
+        # Free local optimizer and gradients to prevent VRAM accumulation
+        self.model.zero_grad(set_to_none=True)
+        del optimizer
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Prototype Extraction (Post-Training)
+        self.model.eval()
+        feature_sum = None
+        feature_count = 0
+
+        def feature_hook(module, inp, out):
+            nonlocal feature_sum, feature_count
+            batch_feats = inp[0].detach().cpu().numpy()
+            if batch_feats.ndim > 2:
+                batch_feats = batch_feats.reshape(batch_feats.shape[0], -1)
+
+            if feature_sum is None:
+                feature_sum = np.sum(batch_feats, axis=0)
+            else:
+                feature_sum += np.sum(batch_feats, axis=0)
+            feature_count += batch_feats.shape[0]
+
+        classifier_layer = find_classifier_module(self.model)
+        hook_handle = classifier_layer.register_forward_hook(feature_hook)
+
+        try:
+            with torch.no_grad():
+                for batch in active_train_loader:
+                    if isinstance(batch, dict):
+                        images = batch.get("img", batch.get("x")).to(self.device)
+                    elif isinstance(batch, (tuple, list)):
+                        images = batch[0].to(self.device)
+                    else:
+                        continue
+                    _ = self.model(images)
+        finally:
+            hook_handle.remove()
+
+        if feature_count > 0:
+            raw_proto = feature_sum / feature_count
+            comp_cfg = self.compression_cfg or {}
+            if hasattr(comp_cfg, "get") and comp_cfg.get("enabled", True):
+                compressed_proto = compress_prototype(
+                    raw_proto,
+                    target_dim=comp_cfg.get("target_dim", 84),
+                    centering=comp_cfg.get("centering", True),
+                    seed=comp_cfg.get("seed", 42),
+                )
+                client_prototype = compressed_proto.tolist()
+            else:
+                client_prototype = raw_proto.tolist()
+        else:
+            client_prototype = None
+
+        if self.simulate_delay:
+            upload_delay = random.uniform(self.min_delay / 2, self.max_delay / 2)
+            time.sleep(upload_delay)
+
+        new_params = [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+        self.model.zero_grad(set_to_none=True)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        elapsed = time.time() - start_time
+        metrics = {
+            "loss": avg_loss,
+            "training_time": elapsed,
             "start_timestamp": start_timestamp,
-            "current_phase": current_phase,
+            "client_id": str(client_idx),
         }
-        # The worker executes the fit function on the provided client state
-        fit_res = client_obj.fit(FitIns(parameters=params, config=config))
+        if client_prototype is not None:
+            metrics["prototype"] = json.dumps(client_prototype)
+
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message="Success"),
+            parameters=ndarrays_to_parameters(new_params),
+            num_examples=num_examples,
+            metrics=metrics,
+        )
         return client_idx, fit_res, current_phase
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -275,22 +445,8 @@ def run_async_simulation(
 ):
     num_clients = len(train_loaders)
 
-    print(f"\nCreating {num_clients} simulated clients...")
     raw_comp = cfg.get("context", {}).get("compression", {})
     comp_dict = OmegaConf.to_container(raw_comp, resolve=True) if OmegaConf.is_config(raw_comp) else dict(raw_comp) if raw_comp else {}
-    clients = create_simulated_clients(
-        num_clients=num_clients,
-        model_fn=model_fn,
-        train_loaders=train_loaders,
-        test_loaders=test_loaders,
-        device=device,
-        local_epochs=cfg.client.local_epochs,
-        learning_rate=cfg.client.learning_rate,
-        simulate_delay=async_cfg["simulate_delay"],
-        min_delay=async_cfg["min_delay"],
-        max_delay=async_cfg["max_delay"],
-        compression_cfg=comp_dict,
-    )
 
     # ── Model & weight-index initialisation ───────────────────────────────────
     global_model = model_fn().to(device)
@@ -490,12 +646,23 @@ def run_async_simulation(
         max_workers = max(1, int(total_cpus // cpus_per_client))
         print(f"[Ray] Auto-detected hardware concurrency limit: {max_workers} active tasks")
 
-    print(f"\nDeploying pool of {max_workers} generic Worker Actors to the Ray cluster...")
+    print(f"\nDeploying pool of {max_workers} persistent Worker Actors to the Ray cluster...")
+    train_loaders_ref = ray.put(train_loaders)
     workers = [
         AsyncWorkerActor.options(
             num_cpus=cfg.client.num_cpus,
             num_gpus=cfg.client.num_gpus,
-        ).remote()
+        ).remote(
+            model_fn=model_fn,
+            train_loaders_ref=train_loaders_ref,
+            local_epochs=cfg.client.local_epochs,
+            learning_rate=cfg.client.learning_rate,
+            simulate_delay=async_cfg["simulate_delay"],
+            min_delay=async_cfg["min_delay"],
+            max_delay=async_cfg["max_delay"],
+            compression_cfg=comp_dict,
+            device_str=str(device),
+        )
         for _ in range(max_workers)
     ]
 
@@ -527,8 +694,8 @@ def run_async_simulation(
             else:
                 params = global_base_params
 
-        # Send the client state to the worker pool
-        task = worker.fit.remote(client_idx, clients[client_idx], params, time.time(), current_phase=0)
+        # Send the client index and parameters to the resident worker
+        task = worker.fit.remote(client_idx, params, time.time(), current_phase=0)
         active_tasks[task] = (worker, client_idx)
 
     # ── Main async event loop ──────────────────────────────────────────────────
@@ -592,7 +759,7 @@ def run_async_simulation(
                     else:
                         params = global_base_params
 
-                new_task = worker.fit.remote(next_client, clients[next_client], params, time.time(), current_phase)
+                new_task = worker.fit.remote(next_client, params, time.time(), current_phase)
                 active_tasks[new_task] = (worker, next_client)
 
         # ── Periodic evaluation ────────────────────────────────────────────────
