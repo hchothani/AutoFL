@@ -329,17 +329,9 @@ def run_async_simulation(
     # ── Phase & timing setup ──────────────────────────────────────────────────
     total_train_time = async_cfg["total_train_time"]
     waiting_interval = async_cfg["waiting_interval"]
-    raw_strategy     = async_cfg.get("client_selection_strategy", "round_robin")
-    if isinstance(raw_strategy, str):
-        client_strategy = raw_strategy.lower().strip()
-    elif raw_strategy is None or raw_strategy is False:
-        client_strategy = "none"
-    else:
-        client_strategy = str(raw_strategy).lower().strip()
-
-    is_scheduler_enabled = client_strategy not in ("none", "null", "false", "disabled", "")
-    temperature          = async_cfg["loss_temperature"]
-    print(f"[Scheduler] Client selection strategy: {client_strategy} (Dynamic scheduler enabled: {is_scheduler_enabled})")
+    client_strategy  = async_cfg["client_selection_strategy"]
+    temperature      = async_cfg["loss_temperature"]
+    print(f"[Scheduler] Client selection strategy: {client_strategy}")
 
     cl_enabled  = cfg.get("cl", {}).get("enabled", False)
     num_phases  = cfg.get("cl", {}).get("num_experiences", 1) if cl_enabled else 1
@@ -498,9 +490,6 @@ def run_async_simulation(
         max_workers = max(1, int(total_cpus // cpus_per_client))
         print(f"[Ray] Auto-detected hardware concurrency limit: {max_workers} active tasks")
 
-    print(f"\nLoading {num_clients} client datasets into Ray Shared Memory (Plasma)...")
-    client_refs = {i: ray.put(clients[i]) for i in range(num_clients)}
-
     print(f"\nDeploying pool of {max_workers} generic Worker Actors to the Ray cluster...")
     workers = [
         AsyncWorkerActor.options(
@@ -519,15 +508,12 @@ def run_async_simulation(
     active_tasks: Dict[Any, Tuple[Any, int]] = {}
     eval_counter, last_eval_time = 0, start_time
 
-    for worker_idx, worker in enumerate(workers):
-        if not is_scheduler_enabled:
-            client_idx = worker_idx % num_clients
-        else:
-            if not available_clients:
-                break
-            client_idx = get_next_client(client_strategy, client_registry, available_clients, temperature)
+    for worker in workers:
+        if not available_clients:
+            break
+        client_idx = get_next_client(client_strategy, client_registry, available_clients, temperature)
         unique_vehicles_trained.add(client_idx)
-        print(f"  [Scheduler] Init Dispatch -> Assigned Vehicle {client_idx} to worker {worker_idx}.")
+        print(f"  [Scheduler] Init Dispatch -> Assigned Vehicle {client_idx} to a generic worker.")
 
         with param_lock:
             if use_lora:
@@ -542,7 +528,7 @@ def run_async_simulation(
                 params = global_base_params
 
         # Send the client state to the worker pool
-        task = worker.fit.remote(client_idx, client_refs[client_idx], params, time.time(), current_phase=0)
+        task = worker.fit.remote(client_idx, clients[client_idx], params, time.time(), current_phase=0)
         active_tasks[task] = (worker, client_idx)
 
     # ── Main async event loop ──────────────────────────────────────────────────
@@ -559,8 +545,7 @@ def run_async_simulation(
 
                 client_registry[client_idx_from_tuple]["data"] = fit_res.num_examples
                 client_registry[client_idx_from_tuple]["loss"] = fit_res.metrics.get("loss", 1.0)
-                if is_scheduler_enabled:
-                    available_clients.append(client_idx_from_tuple)
+                available_clients.append(client_idx_from_tuple)
 
                 print(
                     f"[Phase: {returned_phase}] [t={time.time() - start_time:.1f}s] "
@@ -570,27 +555,19 @@ def run_async_simulation(
                 print(f"[Error] Vehicle {returned_client_idx} failed: {e}")
                 import traceback
                 traceback.print_exc()
-                if is_scheduler_enabled:
-                    available_clients.append(returned_client_idx)
+                available_clients.append(returned_client_idx)
                 continue
 
             # Dispatch a new task specifically to the worker that just finished
             if time.time() < end_time:
-                if not is_scheduler_enabled:
-                    next_client = returned_client_idx
-                    print(
-                        f"  [Scheduler] Direct Re-dispatch (Strategy: {client_strategy}): "
-                        f"Vehicle {next_client} re-dispatched immediately to the freed worker."
-                    )
-                else:
-                    next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
-                    unique_vehicles_trained.add(next_client)
+                next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
+                unique_vehicles_trained.add(next_client)
 
-                    print(
-                        f"  [Scheduler] Handoff: Vehicle {returned_client_idx} finished -> "
-                        f"Dispatched Vehicle {next_client} to the freed worker. "
-                        f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
-                    )
+                print(
+                    f"  [Scheduler] Handoff: Vehicle {returned_client_idx} finished -> "
+                    f"Dispatched Vehicle {next_client} to the freed worker. "
+                    f"(Unique vehicles seen: {len(unique_vehicles_trained)}/{num_clients})"
+                )
 
                 elapsed = time.time() - start_time
                 current_phase = min(int(elapsed / phase_duration), num_phases - 1)
@@ -615,7 +592,7 @@ def run_async_simulation(
                     else:
                         params = global_base_params
 
-                new_task = worker.fit.remote(next_client, client_refs[next_client], params, time.time(), current_phase)
+                new_task = worker.fit.remote(next_client, clients[next_client], params, time.time(), current_phase)
                 active_tasks[new_task] = (worker, next_client)
 
         # ── Periodic evaluation ────────────────────────────────────────────────
@@ -692,8 +669,9 @@ def run_async_simulation(
             print(
                 f"\n[t={time.time() - start_time:.1f}s] Evaluation {eval_counter} (eval took {eval_overhead:.1f}s): "
                 f"Loss: {loss:.4f}, Accuracy: {acc:.4f}, "
-                f"BWT: {bwt:.4f}, FWT: {fwt:.4f} | Active Contexts: {len(server_context_prototypes)}\n"
+                f"BWT: {bwt:.4f}, FWT: {fwt:.4f} | Active Contexts: {len(server_context_prototypes)}"
             )
+            print(f"  [Scheduler Health] {len(unique_vehicles_trained)} out of {num_clients} total vehicles have participated so far.\n")
 
             if wandb_enabled:
                 log_dict = {
