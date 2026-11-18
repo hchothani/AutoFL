@@ -150,18 +150,6 @@ class AsyncWorkerActor:
         self.model.load_state_dict(state_dict)
 
         self.model.train()
-        # Freeze normalization layers during local training so small non-IID batches
-        # do not corrupt running statistics or cause cross-phase drift.
-        for m in self.model.modules():
-            if isinstance(
-                m,
-                (
-                    torch.nn.modules.batchnorm._BatchNorm,
-                    torch.nn.modules.instancenorm._InstanceNorm,
-                ),
-            ):
-                m.eval()
-
         optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
         criterion = torch.nn.CrossEntropyLoss()
 
@@ -507,7 +495,11 @@ def run_async_simulation(
     # ── Context bank state ────────────────────────────────────────────────────
     server_context_prototypes: Dict[int, np.ndarray] = {}
     next_context_id = 0
-    context_distance_threshold = cfg.get("context", {}).get("threshold", 0.15)
+    raw_threshold = cfg.get("context", {}).get("threshold", 0.15)
+    try:
+        context_distance_threshold = float(raw_threshold)
+    except (ValueError, TypeError):
+        context_distance_threshold = 0.35
     context_assignments: Dict[int, int] = {}   
 
     # ### --- ENSEMBLE CHANGE: Upgrade to a SET to track all contexts seen in a phase --- ###
@@ -723,10 +715,9 @@ def run_async_simulation(
                 import traceback
                 traceback.print_exc()
                 available_clients.append(returned_client_idx)
-                continue
 
             # Dispatch a new task specifically to the worker that just finished
-            if time.time() < end_time:
+            if time.time() < end_time and available_clients:
                 next_client = get_next_client(client_strategy, client_registry, available_clients, temperature)
                 unique_vehicles_trained.add(next_client)
 

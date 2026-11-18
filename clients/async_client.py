@@ -90,11 +90,6 @@ class SimulatedAsyncClient(ClientProxy):
         self.model.load_state_dict(state_dict)
 
         self.model.train()
-        # Freeze normalization layers during local training so small non-IID batches
-        # do not corrupt running statistics or cause cross-phase drift.
-        for m in self.model.modules():
-            if isinstance(m, (torch.nn.modules.batchnorm._BatchNorm, torch.nn.modules.instancenorm._InstanceNorm)):
-                m.eval()
         optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
         criterion = torch.nn.CrossEntropyLoss()
 
