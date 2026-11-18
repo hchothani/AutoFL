@@ -377,28 +377,42 @@ def evaluate_global_model(
                         total += labels.size(0)
                         correct += predicted.eq(labels).sum().item()
                 else:
-                    for batch in phase_loader:
-                        if isinstance(batch, dict):
-                            images = batch.get("img", batch.get("x")).to(device)
-                            labels = batch.get("label", batch.get("y")).to(device)
-                        elif isinstance(batch, (tuple, list)):
-                            images, labels = batch[0].to(device), batch[1].to(device)
-                        else:
-                            continue
+                    all_batch_labels = []
+                    accumulated_logits = []
 
-                        ensemble_logits = 0
-                        for state_dict in prepared_states:
-                            model.load_state_dict(state_dict)
+                    for state_idx, state_dict in enumerate(prepared_states):
+                        model.load_state_dict(state_dict)
+                        for batch_idx, batch in enumerate(phase_loader):
+                            if isinstance(batch, dict):
+                                images = batch.get("img", batch.get("x")).to(device)
+                                labels = batch.get("label", batch.get("y")).to(device)
+                            elif isinstance(batch, (tuple, list)):
+                                images, labels = batch[0].to(device), batch[1].to(device)
+                            else:
+                                continue
+
+                            if state_idx == 0:
+                                all_batch_labels.append(labels)
+
                             outputs = model(images)
                             out_norm = torch.norm(outputs, p=2, dim=1, keepdim=True)
-                            ensemble_logits += outputs / torch.clamp(out_norm, min=1e-8)
+                            norm_logits = outputs / torch.clamp(out_norm, min=1e-8)
 
-                        ensemble_logits = ensemble_logits / len(prepared_states)
+                            if state_idx == 0:
+                                accumulated_logits.append(norm_logits)
+                            else:
+                                accumulated_logits[batch_idx] += norm_logits
+
+                    num_models = len(prepared_states)
+                    for batch_idx, labels in enumerate(all_batch_labels):
+                        ensemble_logits = accumulated_logits[batch_idx] / num_models
                         loss = criterion(ensemble_logits, labels)
                         phase_loss += loss.item() * labels.size(0)
                         _, predicted = ensemble_logits.max(1)
                         total += labels.size(0)
                         correct += predicted.eq(labels).sum().item()
+
+                    del accumulated_logits, all_batch_labels
 
             total_total += total
             total_correct += correct
