@@ -75,7 +75,7 @@ async:
   simulate_delay: false
   min_delay: 0.5
   max_delay: 3.0
-  client_selection_strategy: round_robin
+  client_selection_strategy: normal
   loss_temperature: 0.5
 
 wb:
