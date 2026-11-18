@@ -112,6 +112,7 @@ def main():
     parser.add_argument("--all", action="store_true", help="Run all 24 benchmark experiments")
     parser.add_argument("--config", type=str, default=None, help="Run a specific config name")
     parser.add_argument("--filter", type=str, default=None, help="Substring filter (e.g. 'cifar10', 'resnet18', '5c')")
+    parser.add_argument("--exclude", type=str, default=None, help="Substring filter to exclude (e.g. 'resnet18_cifar100')")
     parser.add_argument("--time", type=int, default=None, help="Override async.total_train_time in seconds")
     parser.add_argument("--list", action="store_true", help="List all 24 configs and exit")
 
@@ -142,6 +143,10 @@ def main():
         parser.print_help()
         print("\nTip: Run with --all to execute all 24 runs, or --list to see the experiment matrix.")
         return
+
+    if args.exclude:
+        configs_to_run = [c for c in configs_to_run if args.exclude.lower() not in c.lower()]
+        print(f"Excluded configs matching '{args.exclude}'. Remaining: {len(configs_to_run)} configs.")
 
     print(f"\nStarting benchmark queue of {len(configs_to_run)} experiments...")
     for idx, cfg_name in enumerate(configs_to_run, 1):
