@@ -11,4 +11,4 @@ suite:
   splits: [iid, niid]
 
 wb:
-  group: benchmark_24
+  group: benchmark_24_nocomp

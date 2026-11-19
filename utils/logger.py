@@ -24,10 +24,13 @@ def generate_run_name(cfg: DictConfig, is_async: bool) -> str:
         if val is None:
             continue
             
-        # Format Boolean flags beautifully (e.g., delay: True -> "delay", False -> "nodelay")
+        # Format Boolean flags beautifully (e.g., delay: True -> "delay", False -> "no_delay")
         if str(val) in ["True", "False"]:
-            flag_name = key.split('.')[0] # Grabs just the word 'delay'
-            parts.append(flag_name if str(val) == "True" else f"no_{flag_name}")
+            if key == "context.compression.enabled":
+                parts.append("comp" if str(val) == "True" else "no_comp")
+            else:
+                flag_name = key.split('.')[0] # Grabs just the first token
+                parts.append(flag_name if str(val) == "True" else f"no_{flag_name}")
             
         # Format Standard Strings/Numbers
         elif str(val).lower() != "none":

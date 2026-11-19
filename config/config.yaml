@@ -33,7 +33,7 @@ context:
   threshold: auto
   target_proto_dim: 84
   compression:
-    enabled: true
+    enabled: false
     target_dim: 84
     centering: true
     seed: 42
@@ -82,7 +82,7 @@ wb:
   entity: dashlab
   project: autofl-abhijaat
   mode: online
-  group: benchmark_24
+  group: benchmark_24_nocomp
   run_name_keys:
     - "dataset.workload"
     - "model.name"
@@ -91,6 +91,7 @@ wb:
     - "context.threshold"
     - "async.enabled"
     - "async.client_selection_strategy"
+    - "context.compression.enabled"
     - "context.enabled"
     - "lora.enabled"
     - "cl.enabled"
