@@ -22,7 +22,7 @@ dataset:
   split: niid
 
 model:
-  name: mobilenet_v2
+  name: resnet18
 
 
 client:
