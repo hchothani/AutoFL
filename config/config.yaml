@@ -30,7 +30,7 @@ model:
 
 context:
   enabled: true          # Set to true for Context-Aware Prototype Routing
-  threshold: auto
+  threshold: 0.5
   target_proto_dim: 84
   compression:
     enabled: true
@@ -75,12 +75,12 @@ async:
   simulate_delay: false
   min_delay: 0.5
   max_delay: 3.0
-  client_selection_strategy: normal
+  client_selection_strategy: round_robin 
   loss_temperature: 0.5
 
 wb:
   entity: dashlab
-  project: autofl-abhijaat
+  project: autofl-harsh
   mode: online
   group: benchmark_24
   run_name_keys:
